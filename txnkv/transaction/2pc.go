@@ -175,6 +175,13 @@ type twoPhaseCommitter struct {
 
 	// allowed when tikv disk full happened.
 	diskFullOpt kvrpcpb.DiskFullOpt
+
+	writeIntent  bool
+	onFlyIntents struct {
+		sync.Mutex
+		intents map[uint64]uint64
+		megChan chan struct{}
+	}
 }
 
 type memBufferMutations struct {
@@ -420,7 +427,7 @@ func (c *PlainMutations) AppendMutation(mutation PlainMutation) {
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *KVTxn, sessionID uint64) (*twoPhaseCommitter, error) {
-	return &twoPhaseCommitter{
+	c := &twoPhaseCommitter{
 		store:         txn.store,
 		txn:           txn,
 		startTS:       txn.StartTS(),
@@ -429,7 +436,11 @@ func newTwoPhaseCommitter(txn *KVTxn, sessionID uint64) (*twoPhaseCommitter, err
 		isPessimistic: txn.IsPessimistic(),
 		binlog:        txn.binlog,
 		diskFullOpt:   kvrpcpb.DiskFullOpt_NotAllowedOnFull,
-	}, nil
+		writeIntent:   txn.IsPessimistic() && sessionID > 0,
+	}
+	c.onFlyIntents.intents = map[uint64]uint64{}
+	c.onFlyIntents.megChan = make(chan struct{}, 10)
+	return c, nil
 }
 
 func (c *twoPhaseCommitter) extractKeyExistsErr(err *tikverr.ErrKeyExist) error {
@@ -581,7 +592,10 @@ func (c *twoPhaseCommitter) initKeysAndMutations(ctx context.Context) error {
 			mustExist, mustNotExist, hasAssertUnknown = false, false, false
 		}
 		c.mutations.Push(op, isPessimistic, mustExist, mustNotExist, it.Handle())
-		size += len(key) + len(value)
+		size += len(key)
+		if isShortValue(value) {
+			size += len(value)
+		}
 
 		if c.txn.assertionLevel != kvrpcpb.AssertionLevel_Off {
 			// Check mutations for pessimistic-locked keys with the read results of pessimistic lock requests.
@@ -1404,6 +1418,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 
 	start := time.Now()
+	c.waitForIntents()
 	err = c.prewriteMutations(bo, c.mutations)
 
 	if err != nil {
@@ -2096,4 +2111,36 @@ func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) CommitterMutations {
 		}
 	}
 	return &res
+}
+
+func (c *twoPhaseCommitter) waitForIntents() {
+	if !c.writeIntent {
+		return
+	}
+	defer func() {
+		close(c.onFlyIntents.megChan)
+		for range c.onFlyIntents.megChan {
+		}
+	}()
+	finished := true
+	for {
+		finished = true
+		c.onFlyIntents.Lock()
+		for _, intent := range c.onFlyIntents.intents {
+			if intent > 0 {
+				logutil.BgLogger().Info("MYLOG check finish", zap.Uint64("intent", intent))
+				finished = false
+				break
+			}
+		}
+		c.onFlyIntents.Unlock()
+		if finished {
+			return
+		}
+		<-c.onFlyIntents.megChan
+	}
+}
+
+func isShortValue(value []byte) bool {
+	return len(value) < 256
 }

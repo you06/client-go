@@ -82,11 +82,19 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		if m.IsAssertNotExist(i) {
 			assertion = kvrpcpb.Assertion_NotExist
 		}
-		mutations[i] = &kvrpcpb.Mutation{
-			Op:        m.GetOp(i),
-			Key:       m.GetKey(i),
-			Value:     m.GetValue(i),
-			Assertion: assertion,
+		if c.writeIntent && !isShortValue(m.GetValue(i)) {
+			mutations[i] = &kvrpcpb.Mutation{
+				Op:        m.GetOp(i),
+				Key:       m.GetKey(i),
+				Assertion: assertion,
+			}
+		} else {
+			mutations[i] = &kvrpcpb.Mutation{
+				Op:        m.GetOp(i),
+				Key:       m.GetKey(i),
+				Value:     m.GetValue(i),
+				Assertion: assertion,
+			}
 		}
 		isPessimisticLock[i] = m.IsPessimisticLock(i)
 	}
@@ -136,6 +144,10 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		MinCommitTs:       minCommitTS,
 		MaxCommitTs:       c.maxCommitTS,
 		AssertionLevel:    assertionLevel,
+	}
+
+	if c.writeIntent {
+		req.WriteIntent = kvrpcpb.Intent_PrewriteIntent
 	}
 
 	if _, err := util.EvalFailpoint("invalidMaxCommitTS"); err == nil {

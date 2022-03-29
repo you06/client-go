@@ -199,6 +199,23 @@ func (db *MemDB) Get(key []byte) ([]byte, error) {
 	return db.vlog.getValue(x.vptr), nil
 }
 
+func (db *MemDB) GetWithFlag(key []byte) ([]byte, kv.KeyFlags, error) {
+	if db.vlogInvalid {
+		// panic for easier debugging.
+		panic("vlog is resetted")
+	}
+
+	x := db.traverse(key, false)
+	if x.isNull() {
+		return nil, 0, tikverr.ErrNotExist
+	}
+	if x.vptr.isNull() {
+		// A flag only key, act as value not exists
+		return nil, x.getKeyFlags(), nil
+	}
+	return db.vlog.getValue(x.vptr), x.getKeyFlags(), nil
+}
+
 // SelectValueHistory select the latest value which makes `predicate` returns true from the modification history.
 func (db *MemDB) SelectValueHistory(key []byte, predicate func(value []byte) bool) ([]byte, error) {
 	x := db.traverse(key, false)

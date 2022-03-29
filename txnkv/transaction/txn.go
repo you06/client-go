@@ -117,6 +117,7 @@ type KVTxn struct {
 	// interceptor is used to decorate the RPC request logic related to the txn.
 	interceptor    interceptor.RPCInterceptor
 	assertionLevel kvrpcpb.AssertionLevel
+	writeIntent    bool
 }
 
 // NewTiKVTxn creates a new KVTxn.

@@ -203,6 +203,9 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 				}
 				action.ValuesLock.Unlock()
 			}
+			if c.writeIntent {
+				actionWriteIntent{action.LockCtx}.handleSingleBatch(c, bo, batch)
+			}
 			return nil
 		}
 		var locks []*txnlock.Lock

@@ -2128,7 +2128,7 @@ func (c *twoPhaseCommitter) waitForIntents() {
 		c.onFlyIntents.Lock()
 		for _, intent := range c.onFlyIntents.intents {
 			if intent > 0 {
-				logutil.BgLogger().Info("MYLOG check finish", zap.Uint64("intent", intent))
+				logutil.BgLogger().Debug("MYLOG check finish", zap.Uint64("intent", intent))
 				finished = false
 				break
 			}

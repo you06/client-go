@@ -349,6 +349,7 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient, index int) {
 		} else if uint(length) > bestBatchWaitSize+4 && bestBatchWaitSize < cfg.MaxBatchSize {
 			bestBatchWaitSize++
 		}
+		a.batchCommandsClients[(index+1)%len(a.batchCommandsClients)].goon <- struct{}{}
 
 		a.getClientAndSend(index, reqBuilder)
 		metrics.TiKVBatchSendLatency.Observe(float64(time.Since(start)))
@@ -393,7 +394,6 @@ func (a *batchConn) getClientAndSend(index int, reqBuilder *batchCommandsBuilder
 			trace.Log(e.ctx, "rpc", "send")
 		}
 	})
-	a.batchCommandsClients[(index+1)%len(a.batchCommandsClients)].goon <- struct{}{}
 	if req != nil {
 		cli.send("", req)
 	}

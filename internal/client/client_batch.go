@@ -69,6 +69,7 @@ type batchCommandsEntry struct {
 	// canceled indicated the request is canceled or not.
 	canceled int32
 	err      error
+	PollAt   *time.Time
 }
 
 func (b *batchCommandsEntry) isCanceled() bool {
@@ -240,6 +241,7 @@ func (a *batchConn) fetchAllPendingRequests(
 		return time.Now()
 	}
 	ts := time.Now()
+	headEntry.PollAt = &ts
 	a.reqBuilder.push(headEntry)
 
 	// This loop is for trying best to collect more requests.
@@ -249,6 +251,7 @@ func (a *batchConn) fetchAllPendingRequests(
 			if entry == nil {
 				return ts
 			}
+			entry.PollAt = &ts
 			a.reqBuilder.push(entry)
 		default:
 			return ts
@@ -781,12 +784,16 @@ func sendBatchRequest(
 	case <-timer.C:
 		return nil, errors.WithMessage(context.DeadlineExceeded, "wait sendLoop")
 	}
-	metrics.TiKVBatchWaitDuration.Observe(float64(time.Since(start)))
+	sendTime := time.Now()
+	metrics.TiKVBatchWaitDuration.Observe(float64(sendTime.Sub(start)))
 
 	select {
 	case res, ok := <-entry.res:
 		if !ok {
 			return nil, errors.WithStack(entry.err)
+		}
+		if entry.PollAt != nil {
+			metrics.TiKVBatchPollingDuration.Observe(float64(entry.PollAt.Sub(sendTime)))
 		}
 		return tikvrpc.FromBatchCommandsResponse(res)
 	case <-ctx.Done():

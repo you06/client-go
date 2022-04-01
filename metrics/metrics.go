@@ -59,6 +59,7 @@ var (
 	TiKVStatusDuration                       *prometheus.HistogramVec
 	TiKVStatusCounter                        *prometheus.CounterVec
 	TiKVBatchWaitDuration                    prometheus.Histogram
+	TiKVBatchPollingDuration                 prometheus.Histogram
 	TiKVBatchSendLatency                     prometheus.Histogram
 	TiKVBatchWaitOverLoad                    prometheus.Counter
 	TiKVBatchPendingRequests                 *prometheus.HistogramVec
@@ -268,6 +269,15 @@ func initMetrics(namespace, subsystem string) {
 			Name:      "batch_wait_duration",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 34), // 1ns ~ 8s
 			Help:      "batch wait duration",
+		})
+
+	TiKVBatchPollingDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "batch_polling_duration",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 34), // 1ns ~ 8s
+			Help:      "batch polling duration",
 		})
 
 	TiKVBatchSendLatency = prometheus.NewHistogram(
@@ -583,6 +593,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVStatusDuration)
 	prometheus.MustRegister(TiKVStatusCounter)
 	prometheus.MustRegister(TiKVBatchWaitDuration)
+	prometheus.MustRegister(TiKVBatchPollingDuration)
 	prometheus.MustRegister(TiKVBatchSendLatency)
 	prometheus.MustRegister(TiKVBatchRecvLatency)
 	prometheus.MustRegister(TiKVBatchWaitOverLoad)

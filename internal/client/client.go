@@ -215,13 +215,17 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 				tikvLoad:         &a.tikvTransportLayerLoad,
 				dialTimeout:      a.dialTimeout,
 				tryLock:          tryLock{sync.NewCond(new(sync.Mutex)), false},
+				goon:             make(chan struct{}),
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 		}
 	}
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout, a.done)
-	if allowBatch {
-		go a.batchSendLoop(cfg.TiKVClient)
+	if allowBatch && len(a.v) > 0 {
+		for i := range a.v {
+			go a.batchSendLoop(cfg.TiKVClient, i)
+		}
+		a.batchCommandsClients[0].goon <- struct{}{}
 	}
 
 	return nil

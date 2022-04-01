@@ -197,7 +197,8 @@ type batchConn struct {
 	pendingRequests prometheus.Observer
 	batchSize       prometheus.Observer
 
-	index uint32
+	index        uint32
+	maxBatchSize uint
 }
 
 func newBatchConn(connCount, maxBatchSize uint, idleNotify *uint32) *batchConn {
@@ -209,6 +210,7 @@ func newBatchConn(connCount, maxBatchSize uint, idleNotify *uint32) *batchConn {
 		reqBuilder:             newBatchCommandsBuilder(maxBatchSize),
 		idleNotify:             idleNotify,
 		idleDetect:             time.NewTimer(idleTimeout),
+		maxBatchSize:           maxBatchSize,
 	}
 }
 
@@ -219,6 +221,7 @@ func (a *batchConn) isIdle() bool {
 // fetchAllPendingRequests fetches all pending requests from the channel.
 func (a *batchConn) fetchAllPendingRequests(
 	maxBatchSize int,
+	reqBuilder *batchCommandsBuilder,
 ) time.Time {
 	// Block on the first element.
 	var headEntry *batchCommandsEntry
@@ -242,17 +245,17 @@ func (a *batchConn) fetchAllPendingRequests(
 	}
 	ts := time.Now()
 	headEntry.PollAt = &ts
-	a.reqBuilder.push(headEntry)
+	reqBuilder.push(headEntry)
 
 	// This loop is for trying best to collect more requests.
-	for a.reqBuilder.len() < maxBatchSize {
+	for reqBuilder.len() < maxBatchSize {
 		select {
 		case entry := <-a.batchCommandsCh:
 			if entry == nil {
 				return ts
 			}
 			entry.PollAt = &ts
-			a.reqBuilder.push(entry)
+			reqBuilder.push(entry)
 		default:
 			return ts
 		}
@@ -265,16 +268,17 @@ func (a *batchConn) fetchMorePendingRequests(
 	maxBatchSize int,
 	batchWaitSize int,
 	maxWaitTime time.Duration,
+	reqBuilder *batchCommandsBuilder,
 ) {
 	// Try to collect `batchWaitSize` requests, or wait `maxWaitTime`.
 	after := time.NewTimer(maxWaitTime)
-	for a.reqBuilder.len() < batchWaitSize {
+	for reqBuilder.len() < batchWaitSize {
 		select {
 		case entry := <-a.batchCommandsCh:
 			if entry == nil {
 				return
 			}
-			a.reqBuilder.push(entry)
+			reqBuilder.push(entry)
 		case <-after.C:
 			return
 		}
@@ -284,13 +288,13 @@ func (a *batchConn) fetchMorePendingRequests(
 	// Do an additional non-block try. Here we test the length with `maxBatchSize` instead
 	// of `batchWaitSize` because trying best to fetch more requests is necessary so that
 	// we can adjust the `batchWaitSize` dynamically.
-	for a.reqBuilder.len() < maxBatchSize {
+	for reqBuilder.len() < maxBatchSize {
 		select {
 		case entry := <-a.batchCommandsCh:
 			if entry == nil {
 				return
 			}
-			a.reqBuilder.push(entry)
+			reqBuilder.push(entry)
 		default:
 			return
 		}
@@ -299,7 +303,7 @@ func (a *batchConn) fetchMorePendingRequests(
 
 const idleTimeout = 3 * time.Minute
 
-func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
+func (a *batchConn) batchSendLoop(cfg config.TiKVClient, index int) {
 	defer func() {
 		if r := recover(); r != nil {
 			metrics.TiKVPanicCounter.WithLabelValues(metrics.LabelBatchSendLoop).Inc()
@@ -307,15 +311,17 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
 			logutil.BgLogger().Info("restart batchSendLoop")
-			go a.batchSendLoop(cfg)
+			go a.batchSendLoop(cfg, index)
 		}
 	}()
 
 	bestBatchWaitSize := cfg.BatchWaitSize
+	reqBuilder := newBatchCommandsBuilder(a.maxBatchSize)
 	for {
-		a.reqBuilder.reset()
+		reqBuilder.reset()
+		<-a.batchCommandsClients[index].goon
 
-		start := a.fetchAllPendingRequests(int(cfg.MaxBatchSize))
+		start := a.fetchAllPendingRequests(int(cfg.MaxBatchSize), reqBuilder)
 
 		// curl -X PUT -d 'return(true)' http://0.0.0.0:10080/fail/tikvclient/mockBlockOnBatchClient
 		if val, err := util.EvalFailpoint("mockBlockOnBatchClient"); err == nil {
@@ -324,16 +330,16 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 			}
 		}
 
-		if a.reqBuilder.len() < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
+		if reqBuilder.len() < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
 			// If the target TiKV is overload, wait a while to collect more requests.
 			if atomic.LoadUint64(&a.tikvTransportLayerLoad) >= uint64(cfg.OverloadThreshold) {
 				metrics.TiKVBatchWaitOverLoad.Inc()
-				a.fetchMorePendingRequests(int(cfg.MaxBatchSize), int(bestBatchWaitSize), cfg.MaxBatchWaitTime)
+				a.fetchMorePendingRequests(int(cfg.MaxBatchSize), int(bestBatchWaitSize), cfg.MaxBatchWaitTime, reqBuilder)
 			}
 		}
 		a.pendingRequests.Observe(float64(len(a.batchCommandsCh)))
-		a.batchSize.Observe(float64(a.reqBuilder.len()))
-		length := a.reqBuilder.len()
+		a.batchSize.Observe(float64(reqBuilder.len()))
+		length := reqBuilder.len()
 		if uint(length) == 0 {
 			// The batch command channel is closed.
 			return
@@ -344,42 +350,50 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 			bestBatchWaitSize++
 		}
 
-		a.getClientAndSend()
+		a.getClientAndSend(index, reqBuilder)
 		metrics.TiKVBatchSendLatency.Observe(float64(time.Since(start)))
 	}
 }
 
-func (a *batchConn) getClientAndSend() {
+func (a *batchConn) getClientAndSend(index int, reqBuilder *batchCommandsBuilder) {
 	// Choose a connection by round-robbin.
 	var (
-		cli    *batchCommandsClient
-		target string
+		cli *batchCommandsClient
+		//target string
 	)
-	for i := 0; i < len(a.batchCommandsClients); i++ {
-		a.index = (a.index + 1) % uint32(len(a.batchCommandsClients))
-		target = a.batchCommandsClients[a.index].target
-		// The lock protects the batchCommandsClient from been closed while it's in use.
-		if a.batchCommandsClients[a.index].tryLockForSend() {
-			cli = a.batchCommandsClients[a.index]
+	cli = a.batchCommandsClients[index]
+	for {
+		if cli.tryLockForSend() {
 			break
 		}
 	}
-	if cli == nil {
-		logutil.BgLogger().Warn("no available connections", zap.String("target", target))
-		metrics.TiKVNoAvailableConnectionCounter.Inc()
-
-		// Please ensure the error is handled in region cache correctly.
-		a.reqBuilder.cancel(errors.New("no available connections"))
-		return
-	}
+	//target = cli.target
+	//for i := 0; i < len(a.batchCommandsClients); i++ {
+	//	a.index = (a.index + 1) % uint32(len(a.batchCommandsClients))
+	//	target = a.batchCommandsClients[a.index].target
+	//	// The lock protects the batchCommandsClient from been closed while it's in use.
+	//	if a.batchCommandsClients[a.index].tryLockForSend() {
+	//		cli = a.batchCommandsClients[a.index]
+	//		break
+	//	}
+	//}
+	//if cli == nil {
+	//	logutil.BgLogger().Warn("no available connections", zap.String("target", target))
+	//	metrics.TiKVNoAvailableConnectionCounter.Inc()
+	//
+	//	// Please ensure the error is handled in region cache correctly.
+	//	a.reqBuilder.cancel(errors.New("no available connections"))
+	//	return
+	//}
 	defer cli.unlockForSend()
 
-	req, forwardingReqs := a.reqBuilder.build(func(id uint64, e *batchCommandsEntry) {
+	req, forwardingReqs := reqBuilder.build(func(id uint64, e *batchCommandsEntry) {
 		cli.batched.Store(id, e)
 		if trace.IsEnabled() {
 			trace.Log(e.ctx, "rpc", "send")
 		}
 	})
+	a.batchCommandsClients[(index+1)%len(a.batchCommandsClients)].goon <- struct{}{}
 	if req != nil {
 		cli.send("", req)
 	}
@@ -391,6 +405,7 @@ func (a *batchConn) getClientAndSend() {
 type tryLock struct {
 	*sync.Cond
 	reCreating bool
+	// slow       sync.Mutex
 }
 
 func (l *tryLock) tryLockForSend() bool {
@@ -421,6 +436,14 @@ func (l *tryLock) unlockForRecreate() {
 	l.Broadcast()
 	l.L.Unlock()
 }
+
+// func (l *tryLock) slowLock() {
+// 	l.slow.Lock()
+// }
+
+// func (l *tryLock) slowUnLock() {
+// 	l.slow.Unlock()
+// }
 
 type batchCommandsStream struct {
 	tikvpb.Tikv_BatchCommandsClient
@@ -496,6 +519,8 @@ type batchCommandsClient struct {
 	closed int32
 	// tryLock protects client when re-create the streaming.
 	tryLock
+	// goon channel
+	goon chan struct{}
 }
 
 func (c *batchCommandsClient) isStopped() bool {

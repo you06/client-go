@@ -647,7 +647,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations(ctx context.Context) error {
 		return err
 	}
 
-	commitDetail := &util.CommitDetails{WriteSize: size, WriteKeys: c.mutations.Len()}
+	commitDetail := &util.CommitDetails{
+		WriteSize: size,
+		WriteKeys: c.mutations.Len(),
+		ResolveLock: util.ResolveLockDetail{
+			RequestSource: txn.RequestSource,
+		},
+	}
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
 	c.hasNoNeedCommitKeys = checkCnt > 0

@@ -251,7 +251,7 @@ func (s *KVStore) runSafePointChecker() {
 
 // Begin a global transaction.
 func (s *KVStore) Begin(opts ...TxnOption) (*transaction.KVTxn, error) {
-	options := &txnOptions{}
+	options := &transaction.TxnOptions{}
 	// Inject the options
 	for _, opt := range opts {
 		opt(options)
@@ -260,18 +260,22 @@ func (s *KVStore) Begin(opts ...TxnOption) (*transaction.KVTxn, error) {
 	if options.TxnScope == "" {
 		options.TxnScope = oracle.GlobalTxnScope
 	}
+	var (
+		startTS uint64
+		err     error
+	)
 	if options.StartTS != nil {
-		snapshot := txnsnapshot.NewTiKVSnapshot(s, *options.StartTS, s.nextReplicaReadSeed())
-		return transaction.NewTiKVTxn(s, snapshot, *options.StartTS, options.TxnScope)
+		startTS = *options.StartTS
+	} else {
+		bo := retry.NewBackofferWithVars(context.Background(), transaction.TsoMaxBackoff, nil)
+		startTS, err = s.getTimestampWithRetry(bo, options.TxnScope)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	bo := retry.NewBackofferWithVars(context.Background(), transaction.TsoMaxBackoff, nil)
-	startTS, err := s.getTimestampWithRetry(bo, options.TxnScope)
-	if err != nil {
-		return nil, err
-	}
 	snapshot := txnsnapshot.NewTiKVSnapshot(s, startTS, s.nextReplicaReadSeed())
-	return transaction.NewTiKVTxn(s, snapshot, startTS, options.TxnScope)
+	return transaction.NewTiKVTxn(s, snapshot, startTS, options)
 }
 
 // DeleteRange delete all versions of all keys in the range[startKey,endKey) immediately.
@@ -602,26 +606,19 @@ func NewLockResolver(etcdAddrs []string, security config.Security, opts ...pd.Cl
 	return s.lockResolver, nil
 }
 
-// txnOptions indicates the option when beginning a transaction.
-// txnOptions are set by the TxnOption values passed to Begin
-type txnOptions struct {
-	TxnScope string
-	StartTS  *uint64
-}
-
 // TxnOption configures Transaction
-type TxnOption func(*txnOptions)
+type TxnOption func(*transaction.TxnOptions)
 
 // WithTxnScope sets the TxnScope to txnScope
 func WithTxnScope(txnScope string) TxnOption {
-	return func(st *txnOptions) {
+	return func(st *transaction.TxnOptions) {
 		st.TxnScope = txnScope
 	}
 }
 
 // WithStartTS sets the StartTS to startTS
 func WithStartTS(startTS uint64) TxnOption {
-	return func(st *txnOptions) {
+	return func(st *transaction.TxnOptions) {
 		st.StartTS = &startTS
 	}
 }

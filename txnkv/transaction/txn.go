@@ -77,6 +77,15 @@ type SchemaAmender interface {
 	AmendTxn(ctx context.Context, startInfoSchema SchemaVer, change *RelatedSchemaChange, mutations CommitterMutations) (CommitterMutations, error)
 }
 
+// TxnOptions indicates the option when beginning a transaction.
+// TxnOptions are set by the TxnOption values passed to Begin
+type TxnOptions struct {
+	TxnScope           string
+	StartTS            *uint64
+	RequestSourceScope string
+	RequestSourceType  string
+}
+
 // KVTxn contains methods to interact with a TiKV transaction.
 type KVTxn struct {
 	snapshot  *txnsnapshot.KVSnapshot
@@ -115,12 +124,14 @@ type KVTxn struct {
 	diskFullOpt             kvrpcpb.DiskFullOpt
 	commitTSUpperBoundCheck func(uint64) bool
 	// interceptor is used to decorate the RPC request logic related to the txn.
-	interceptor    interceptor.RPCInterceptor
-	assertionLevel kvrpcpb.AssertionLevel
+	interceptor        interceptor.RPCInterceptor
+	assertionLevel     kvrpcpb.AssertionLevel
+	RequestSourceScope string
+	RequestSourceType  string
 }
 
 // NewTiKVTxn creates a new KVTxn.
-func NewTiKVTxn(store kvstore, snapshot *txnsnapshot.KVSnapshot, startTS uint64, scope string) (*KVTxn, error) {
+func NewTiKVTxn(store kvstore, snapshot *txnsnapshot.KVSnapshot, startTS uint64, options *TxnOptions) (*KVTxn, error) {
 	cfg := config.GetGlobalConfig()
 	newTiKVTxn := &KVTxn{
 		snapshot:          snapshot,
@@ -130,7 +141,7 @@ func NewTiKVTxn(store kvstore, snapshot *txnsnapshot.KVSnapshot, startTS uint64,
 		startTime:         time.Now(),
 		valid:             true,
 		vars:              tikv.DefaultVars,
-		scope:             scope,
+		scope:             options.TxnScope,
 		enableAsyncCommit: cfg.EnableAsyncCommit,
 		enable1PC:         cfg.Enable1PC,
 		diskFullOpt:       kvrpcpb.DiskFullOpt_NotAllowedOnFull,
@@ -868,4 +879,10 @@ func (txn *KVTxn) SetBinlogExecutor(binlog BinlogExecutor) {
 // GetClusterID returns store's cluster id.
 func (txn *KVTxn) GetClusterID() uint64 {
 	return txn.store.GetClusterID()
+}
+
+// SetRequestSourceType sets the type of the request source.
+func (txn *KVTxn) SetRequestSourceType(tp string) {
+	txn.RequestSourceType = tp
+	txn.snapshot.RequestSourceType = tp
 }

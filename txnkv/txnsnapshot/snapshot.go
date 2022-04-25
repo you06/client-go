@@ -140,7 +140,9 @@ type KVSnapshot struct {
 	// resourceGroupTagger is use to set the kv request resource group tag if resourceGroupTag is nil.
 	resourceGroupTagger tikvrpc.ResourceGroupTagger
 	// interceptor is used to decorate the RPC request logic related to the snapshot.
-	interceptor interceptor.RPCInterceptor
+	interceptor        interceptor.RPCInterceptor
+	RequestSourceScope string
+	RequestSourceType  string
 }
 
 // NewTiKVSnapshot creates a snapshot of an TiKV store.
@@ -515,7 +517,6 @@ func (s *KVSnapshot) get(ctx context.Context, bo *retry.Backoffer, k []byte) ([]
 			return value, nil
 		}
 	}
-	s.mu.RUnlock()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tikvSnapshot.get", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -523,13 +524,13 @@ func (s *KVSnapshot) get(ctx context.Context, bo *retry.Backoffer, k []byte) ([]
 	}
 	if _, err := util.EvalFailpoint("snapshot-get-cache-fail"); err == nil {
 		if bo.GetCtx().Value("TestSnapshotCache") != nil {
+			s.mu.RUnlock()
 			panic("cache miss")
 		}
 	}
 
 	cli := NewClientHelper(s.store, &s.resolvedLocks, &s.committedLocks, true)
 
-	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*locate.RPCRuntimeStats)
 		defer func() {

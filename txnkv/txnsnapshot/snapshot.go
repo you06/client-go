@@ -140,9 +140,9 @@ type KVSnapshot struct {
 	// resourceGroupTagger is use to set the kv request resource group tag if resourceGroupTag is nil.
 	resourceGroupTagger tikvrpc.ResourceGroupTagger
 	// interceptor is used to decorate the RPC request logic related to the snapshot.
-	interceptor        interceptor.RPCInterceptor
-	RequestSourceScope string
-	RequestSourceType  string
+	interceptor           interceptor.RPCInterceptor
+	RequestSourceInternal bool
+	RequestSourceType     string
 }
 
 // NewTiKVSnapshot creates a snapshot of an TiKV store.

@@ -623,19 +623,6 @@ func WithStartTS(startTS uint64) TxnOption {
 	}
 }
 
-func WithInternal(tp string) TxnOption {
-	return func(st *transaction.TxnOptions) {
-		st.RequestSourceScope = "internal"
-		st.RequestSourceType = tp
-	}
-}
-
-func WithExternal() TxnOption {
-	return func(st *transaction.TxnOptions) {
-		st.RequestSourceScope = "external"
-	}
-}
-
 // TODO: remove once tidb and br are ready
 
 // KVTxn contains methods to interact with a TiKV transaction.

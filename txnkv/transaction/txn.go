@@ -80,10 +80,8 @@ type SchemaAmender interface {
 // TxnOptions indicates the option when beginning a transaction.
 // TxnOptions are set by the TxnOption values passed to Begin
 type TxnOptions struct {
-	TxnScope           string
-	StartTS            *uint64
-	RequestSourceScope string
-	RequestSourceType  string
+	TxnScope string
+	StartTS  *uint64
 }
 
 // KVTxn contains methods to interact with a TiKV transaction.
@@ -124,10 +122,10 @@ type KVTxn struct {
 	diskFullOpt             kvrpcpb.DiskFullOpt
 	commitTSUpperBoundCheck func(uint64) bool
 	// interceptor is used to decorate the RPC request logic related to the txn.
-	interceptor        interceptor.RPCInterceptor
-	assertionLevel     kvrpcpb.AssertionLevel
-	RequestSourceScope string
-	RequestSourceType  string
+	interceptor           interceptor.RPCInterceptor
+	assertionLevel        kvrpcpb.AssertionLevel
+	RequestSourceInternal bool
+	RequestSourceType     string
 }
 
 // NewTiKVTxn creates a new KVTxn.
@@ -879,6 +877,12 @@ func (txn *KVTxn) SetBinlogExecutor(binlog BinlogExecutor) {
 // GetClusterID returns store's cluster id.
 func (txn *KVTxn) GetClusterID() uint64 {
 	return txn.store.GetClusterID()
+}
+
+// SetRequestSourceInternal sets the scope of the request source.
+func (txn *KVTxn) SetRequestSourceInternal(internal bool) {
+	txn.RequestSourceInternal = internal
+	txn.snapshot.RequestSourceInternal = internal
 }
 
 // SetRequestSourceType sets the type of the request source.

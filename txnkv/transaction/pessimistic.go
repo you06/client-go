@@ -106,8 +106,13 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		ReturnValues:   action.ReturnValues,
 		CheckExistence: action.CheckExistence,
 		MinCommitTs:    c.forUpdateTS + 1,
-	}, kvrpcpb.Context{Priority: c.priority, SyncLog: c.syncLog, ResourceGroupTag: action.LockCtx.ResourceGroupTag,
-		MaxExecutionDurationMs: uint64(client.MaxWriteExecutionTime.Milliseconds())})
+	}, kvrpcpb.Context{
+		Priority:               c.priority,
+		SyncLog:                c.syncLog,
+		ResourceGroupTag:       action.LockCtx.ResourceGroupTag,
+		MaxExecutionDurationMs: uint64(client.MaxWriteExecutionTime.Milliseconds()),
+		RequestSource:          c.txn.getRequestSource(),
+	})
 	if action.LockCtx.ResourceGroupTag == nil && action.LockCtx.ResourceGroupTagger != nil {
 		req.ResourceGroupTag = action.LockCtx.ResourceGroupTagger(req.Req.(*kvrpcpb.PessimisticLockRequest))
 	}

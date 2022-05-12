@@ -369,6 +369,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *retry.Backoffer, batch batchKeys, 
 			TaskId:           s.mu.taskID,
 			ResourceGroupTag: s.resourceGroupTag,
 			IsolationLevel:   s.isolationLevel.ToPB(),
+			RequestSource:    s.getRequestSource(),
 		})
 		if s.resourceGroupTag == nil && s.resourceGroupTagger != nil {
 			s.resourceGroupTagger(req)
@@ -547,6 +548,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *retry.Backoffer, k []byte) ([]
 			TaskId:           s.mu.taskID,
 			ResourceGroupTag: s.resourceGroupTag,
 			IsolationLevel:   s.isolationLevel.ToPB(),
+			RequestSource:    s.getRequestSource(),
 		})
 	if s.resourceGroupTag == nil && s.resourceGroupTagger != nil {
 		s.resourceGroupTagger(req)
@@ -834,6 +836,16 @@ func (s *KVSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*locate.R
 		stat.Count += v.Count
 		stat.Consume += v.Consume
 	}
+}
+
+func (s *KVSnapshot) getRequestSource() string {
+	if s.RequestSourceType == "" {
+		logutil.BgLogger().Info("MYLOG empty resource type", zap.Uint64("version", s.version))
+	}
+	if s.RequestSourceInternal {
+		return "internal_" + s.RequestSourceType
+	}
+	return "external_" + s.RequestSourceType
 }
 
 // SnapshotRuntimeStats records the runtime stats of snapshot.

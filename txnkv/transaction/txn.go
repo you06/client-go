@@ -890,3 +890,13 @@ func (txn *KVTxn) SetRequestSourceType(tp string) {
 	txn.RequestSourceType = tp
 	txn.snapshot.RequestSourceType = tp
 }
+
+func (txn *KVTxn) getRequestSource() string {
+	if txn.RequestSourceType == "" {
+		logutil.BgLogger().Info("MYLOG empty resource type", zap.Stack("stackl"))
+	}
+	if txn.RequestSourceInternal {
+		return "internal_" + txn.RequestSourceType
+	}
+	return "external_" + txn.RequestSourceType
+}

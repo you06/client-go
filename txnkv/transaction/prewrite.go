@@ -155,9 +155,14 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		req.TryOnePc = true
 	}
 
-	r := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req,
-		kvrpcpb.Context{Priority: c.priority, SyncLog: c.syncLog, ResourceGroupTag: c.resourceGroupTag,
-			DiskFullOpt: c.diskFullOpt, MaxExecutionDurationMs: uint64(client.MaxWriteExecutionTime.Milliseconds())})
+	r := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, kvrpcpb.Context{
+		Priority:               c.priority,
+		SyncLog:                c.syncLog,
+		ResourceGroupTag:       c.resourceGroupTag,
+		DiskFullOpt:            c.diskFullOpt,
+		MaxExecutionDurationMs: uint64(client.MaxWriteExecutionTime.Milliseconds()),
+		RequestSource:          c.txn.getRequestSource(),
+	})
 	if c.resourceGroupTag == nil && c.resourceGroupTagger != nil {
 		c.resourceGroupTagger(r)
 	}

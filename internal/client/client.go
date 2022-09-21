@@ -38,6 +38,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"github.com/tikv/client-go/v2/oracle/oracles"
 	"io"
 	"math"
 	"runtime/trace"
@@ -123,7 +124,7 @@ type connArray struct {
 }
 
 func newConnArray(maxSize uint, addr string, security config.Security,
-	idleNotify *uint32, enableBatch bool, dialTimeout time.Duration, opts []grpc.DialOption) (*connArray, error) {
+	idleNotify *uint32, enableBatch bool, dialTimeout time.Duration, opts []grpc.DialOption, hlcClock *oracles.HLCClock) (*connArray, error) {
 	a := &connArray{
 		index:         0,
 		v:             make([]*grpc.ClientConn, maxSize),
@@ -131,13 +132,13 @@ func newConnArray(maxSize uint, addr string, security config.Security,
 		done:          make(chan struct{}),
 		dialTimeout:   dialTimeout,
 	}
-	if err := a.Init(addr, security, idleNotify, enableBatch, opts...); err != nil {
+	if err := a.Init(addr, security, idleNotify, enableBatch, hlcClock, opts...); err != nil {
 		return nil, err
 	}
 	return a, nil
 }
 
-func (a *connArray) Init(addr string, security config.Security, idleNotify *uint32, enableBatch bool, opts ...grpc.DialOption) error {
+func (a *connArray) Init(addr string, security config.Security, idleNotify *uint32, enableBatch bool, hlcClock *oracles.HLCClock, opts ...grpc.DialOption) error {
 	a.target = addr
 
 	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
@@ -162,6 +163,7 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 	allowBatch := (cfg.TiKVClient.MaxBatchSize > 0) && enableBatch
 	if allowBatch {
 		a.batchConn = newBatchConn(uint(len(a.v)), cfg.TiKVClient.MaxBatchSize, idleNotify)
+		a.batchConn.HLCClock = hlcClock
 		a.pendingRequests = metrics.TiKVBatchPendingRequests.WithLabelValues(a.target)
 		a.batchSize = metrics.TiKVBatchRequests.WithLabelValues(a.target)
 	}
@@ -223,6 +225,7 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 				tikvLoad:         &a.tikvTransportLayerLoad,
 				dialTimeout:      a.dialTimeout,
 				tryLock:          tryLock{sync.NewCond(new(sync.Mutex)), false},
+				HLCClock:         hlcClock,
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 		}
@@ -293,6 +296,8 @@ type RPCClient struct {
 	// Periodically check whether there is any connection that is idle and then close and remove these connections.
 	// Implement background cleanup.
 	isClosed bool
+	// HLCClock is a hack implement.
+	HLCClock *oracles.HLCClock
 }
 
 // NewRPCClient creates a client that manages connections and rpc calls with tikv-servers.
@@ -352,7 +357,8 @@ func (c *RPCClient) createConnArray(addr string, enableBatch bool, opts ...func(
 			&c.idleNotify,
 			enableBatch,
 			c.option.dialTimeout,
-			c.option.gRPCDialOptions)
+			c.option.gRPCDialOptions,
+			c.HLCClock)
 
 		if err != nil {
 			return nil, err

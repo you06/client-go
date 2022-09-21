@@ -37,6 +37,7 @@ package client
 
 import (
 	"context"
+	"github.com/tikv/client-go/v2/oracle/oracles"
 	"math"
 	"runtime/trace"
 	"sync"
@@ -197,6 +198,9 @@ type batchConn struct {
 	batchSize       prometheus.Observer
 
 	index uint32
+
+	// HLCClock is a hack implementation.
+	HLCClock *oracles.HLCClock
 }
 
 func newBatchConn(connCount, maxBatchSize uint, idleNotify *uint32) *batchConn {
@@ -377,6 +381,9 @@ func (a *batchConn) getClientAndSend() {
 			trace.Log(e.ctx, "rpc", "send")
 		}
 	})
+	if a.HLCClock != nil {
+		req.DbTs, _ = a.HLCClock.GetTimestamp(context.TODO(), nil)
+	}
 	if req != nil {
 		cli.send("", req)
 	}
@@ -493,6 +500,8 @@ type batchCommandsClient struct {
 	closed int32
 	// tryLock protects client when re-create the streaming.
 	tryLock
+	// HLCClock is a hack implementation.
+	HLCClock *oracles.HLCClock
 }
 
 func (c *batchCommandsClient) isStopped() bool {
@@ -619,6 +628,10 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 			}
 			metrics.TiKVBatchClientUnavailable.Observe(time.Since(now).Seconds())
 			continue
+		}
+
+		if c.HLCClock != nil {
+			c.HLCClock.OnMsg(resp.GetMaxTs())
 		}
 
 		responses := resp.GetResponses()

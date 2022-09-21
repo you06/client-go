@@ -164,9 +164,13 @@ func (s *KVStore) CheckVisibility(startTime uint64) error {
 
 // NewKVStore creates a new TiKV store instance.
 func NewKVStore(uuid string, pdClient pd.Client, spkv SafePointKV, tikvclient Client) (*KVStore, error) {
-	o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
-	if err != nil {
-		return nil, err
+	//o, err := oracles.NewPdOracle(pdClient, time.Duration(oracleUpdateInterval)*time.Millisecond)
+	//if err != nil {
+	//	return nil, err
+	//}
+	o := oracles.NewHLCClockWithNow()
+	if rpcClient, ok := tikvclient.(*client.RPCClient); ok {
+		rpcClient.HLCClock = o.(*oracles.HLCClock)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	store := &KVStore{

@@ -36,8 +36,6 @@ package oracles
 
 import (
 	"context"
-	"github.com/tikv/client-go/v2/internal/logutil"
-	"go.uber.org/zap"
 	"sync/atomic"
 	"time"
 
@@ -91,14 +89,12 @@ func (h *HLCClock) GetTimestamp(context.Context, *oracle.Option) (uint64, error)
 		}
 		ts = oracle.ComposeTS(int64(t), int64(c))
 		if atomic.CompareAndSwapUint64(&h.time, o, ts) {
-			logutil.BgLogger().Info("[HLC] GetTimestamp", zap.Uint64("hlc_ts", ts))
 			return ts, nil
 		}
 	}
 }
 
 func (h *HLCClock) OnMsg(m uint64) {
-	logutil.BgLogger().Info("[HLC] OnMsg", zap.Uint64("max_ts", m))
 	pt := h.clock()
 	mp, ml := extractPhysicalAndLogical(m)
 	for {

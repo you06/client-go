@@ -61,6 +61,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"github.com/tikv/client-go/v2/txnkv/txnutil"
 	"github.com/tikv/client-go/v2/util"
+	"github.com/tikv/client-go/v2/util/admission"
 	"go.uber.org/zap"
 )
 
@@ -510,7 +511,10 @@ const getMaxBackoff = 20000
 
 // Get gets the value for key k from snapshot.
 func (s *KVSnapshot) Get(ctx context.Context, k []byte) ([]byte, error) {
+	w := admission.GlobalManager.Admit(s.version, txnutil.PriorityHigh, 1)
+	w.Wait(ctx)
 	defer func(start time.Time) {
+		w.Release()
 		metrics.TxnCmdHistogramWithGet.Observe(time.Since(start).Seconds())
 	}(time.Now())
 

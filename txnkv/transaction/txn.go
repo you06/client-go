@@ -63,6 +63,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/txnkv/txnutil"
 	"github.com/tikv/client-go/v2/util"
+	"github.com/tikv/client-go/v2/util/admission"
 	"go.uber.org/zap"
 )
 
@@ -365,6 +366,10 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	defer trace.StartRegion(ctx, "CommitTxn").End()
+
+	w := admission.GlobalManager.Admit(txn.startTS, txnutil.PriorityHigh, 1)
+	w.Wait(ctx)
+	defer w.Release()
 
 	if !txn.valid {
 		return tikverr.ErrInvalidTxn

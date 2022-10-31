@@ -375,7 +375,7 @@ func TestBatchCommandsBuilder(t *testing.T) {
 	builder.reset()
 	req := new(tikvpb.BatchCommandsRequest_Request)
 	for i := 0; i < 10; i++ {
-		builder.push(&batchCommandsEntry{req: req})
+		builder.push(&batchCommandsEntry{req: req}, 0)
 		assert.Equal(t, builder.len(), i+1)
 	}
 	entryMap := make(map[uint64]*batchCommandsEntry)
@@ -400,7 +400,7 @@ func TestBatchCommandsBuilder(t *testing.T) {
 			// Each forwarded host has incremental count of requests
 			// and interleaves with each other.
 			if i <= j {
-				builder.push(&batchCommandsEntry{req: req, forwardedHost: host})
+				builder.push(&batchCommandsEntry{req: req, forwardedHost: host}, 0)
 			}
 		}
 	}
@@ -434,7 +434,7 @@ func TestBatchCommandsBuilder(t *testing.T) {
 		{canceled: 0, req: req},
 	}
 	for _, entry := range entries {
-		builder.push(entry)
+		builder.push(entry, 0)
 	}
 	entryMap = make(map[uint64]*batchCommandsEntry)
 	batchedReq, forwardingReqs = builder.build(func(id uint64, e *batchCommandsEntry) {
@@ -455,7 +455,7 @@ func TestBatchCommandsBuilder(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		entry := &batchCommandsEntry{req: req, res: make(chan *tikvpb.BatchCommandsResponse_Response, 1)}
 		entries = append(entries, entry)
-		builder.push(entry)
+		builder.push(entry, 0)
 	}
 	err := errors.New("error")
 	builder.cancel(err)

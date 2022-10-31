@@ -62,6 +62,7 @@ var (
 	TiKVLocalLatchWaitTimeHistogram          prometheus.Histogram
 	TiKVStatusDuration                       *prometheus.HistogramVec
 	TiKVStatusCounter                        *prometheus.CounterVec
+	TiKVBatchScheduleDuration                prometheus.Histogram
 	TiKVBatchWaitDuration                    prometheus.Histogram
 	TiKVBatchSendLatency                     prometheus.Histogram
 	TiKVBatchWaitOverLoad                    prometheus.Counter
@@ -299,6 +300,15 @@ func initMetrics(namespace, subsystem string) {
 			Name:      "kv_status_api_count",
 			Help:      "Counter of access kv status api.",
 		}, []string{LblResult})
+
+	TiKVBatchScheduleDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "batch_schedule_duration",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 34), // 1ns ~ 8s
+			Help:      "batch schedule duration",
+		})
 
 	TiKVBatchWaitDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -625,6 +635,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVLocalLatchWaitTimeHistogram)
 	prometheus.MustRegister(TiKVStatusDuration)
 	prometheus.MustRegister(TiKVStatusCounter)
+	prometheus.MustRegister(TiKVBatchScheduleDuration)
 	prometheus.MustRegister(TiKVBatchWaitDuration)
 	prometheus.MustRegister(TiKVBatchSendLatency)
 	prometheus.MustRegister(TiKVBatchRecvLatency)

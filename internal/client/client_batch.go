@@ -69,6 +69,7 @@ type batchCommandsEntry struct {
 	// canceled indicated the request is canceled or not.
 	canceled int32
 	err      error
+	start    time.Time
 }
 
 func (b *batchCommandsEntry) isCanceled() bool {
@@ -97,7 +98,8 @@ func (b *batchCommandsBuilder) len() int {
 	return len(b.entries)
 }
 
-func (b *batchCommandsBuilder) push(entry *batchCommandsEntry) {
+func (b *batchCommandsBuilder) push(entry *batchCommandsEntry, d time.Duration) {
+	metrics.TiKVBatchScheduleDuration.Observe(float64(d))
 	b.entries = append(b.entries, entry)
 }
 
@@ -240,7 +242,7 @@ func (a *batchConn) fetchAllPendingRequests(
 		return time.Now()
 	}
 	ts := time.Now()
-	a.reqBuilder.push(headEntry)
+	a.reqBuilder.push(headEntry, ts.Sub(headEntry.start))
 
 	// This loop is for trying best to collect more requests.
 	for a.reqBuilder.len() < maxBatchSize {
@@ -249,7 +251,7 @@ func (a *batchConn) fetchAllPendingRequests(
 			if entry == nil {
 				return ts
 			}
-			a.reqBuilder.push(entry)
+			a.reqBuilder.push(entry, ts.Sub(entry.start))
 		default:
 			return ts
 		}
@@ -263,15 +265,17 @@ func (a *batchConn) fetchMorePendingRequests(
 	batchWaitSize int,
 	maxWaitTime time.Duration,
 ) {
+
 	// Try to collect `batchWaitSize` requests, or wait `maxWaitTime`.
 	after := time.NewTimer(maxWaitTime)
+	now := time.Now()
 	for a.reqBuilder.len() < batchWaitSize {
 		select {
 		case entry := <-a.batchCommandsCh:
 			if entry == nil {
 				return
 			}
-			a.reqBuilder.push(entry)
+			a.reqBuilder.push(entry, now.Sub(entry.start))
 		case <-after.C:
 			return
 		}
@@ -287,7 +291,7 @@ func (a *batchConn) fetchMorePendingRequests(
 			if entry == nil {
 				return
 			}
-			a.reqBuilder.push(entry)
+			a.reqBuilder.push(entry, now.Sub(entry.start))
 		default:
 			return
 		}
@@ -767,11 +771,12 @@ func sendBatchRequest(
 		forwardedHost: forwardedHost,
 		canceled:      0,
 		err:           nil,
+		start:         time.Now(),
 	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
-	start := time.Now()
+	start := entry.start
 	select {
 	case batchConn.batchCommandsCh <- entry:
 	case <-ctx.Done():

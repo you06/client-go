@@ -152,6 +152,11 @@ type regionStore struct {
 	buckets *metapb.Buckets
 }
 
+func (r *regionStore) AccessLeaderPeer() (uint64, int) {
+	idx := r.accessIndex[tiKVOnly][r.workTiKVIdx]
+	return r.stores[idx].storeID, idx
+}
+
 func (r *regionStore) accessStore(mode accessMode, idx AccessIndex) (int, *Store) {
 	sidx := r.accessIndex[mode][idx]
 	return sidx, r.stores[sidx]
@@ -293,6 +298,10 @@ func newRegion(bo *retry.Backoffer, c *RegionCache, pdRegion *pd.Region) (*Regio
 	// mark region has been init accessed.
 	r.lastAccess = time.Now().Unix()
 	return r, nil
+}
+
+func (r *Region) GetStore() *regionStore {
+	return r.getStore()
 }
 
 func (r *Region) getStore() (store *regionStore) {
@@ -1937,6 +1946,11 @@ func (r *Region) GetID() uint64 {
 // GetMeta returns region meta.
 func (r *Region) GetMeta() *metapb.Region {
 	return proto.Clone(r.meta).(*metapb.Region)
+}
+
+// GetPeer returns peer of given index.
+func (r *Region) GetPeer(idx int) *metapb.Peer {
+	return proto.Clone(r.meta.Peers[idx]).(*metapb.Peer)
 }
 
 // GetLeaderPeerID returns leader peer ID.

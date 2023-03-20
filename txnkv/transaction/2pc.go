@@ -1909,12 +1909,13 @@ func (batchExe *batchExecutor) initUtils() error {
 
 // startWork concurrently do the work for each batch considering rate limit
 func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, batches []batchMutations) {
+	store := batchExe.committer.store
 	for idx, batch1 := range batches {
 		waitStart := time.Now()
 		if exit := batchExe.rateLimiter.GetToken(exitCh); !exit {
 			batchExe.tokenWaitDuration += time.Since(waitStart)
 			batch := batch1
-			go func() {
+			store.Go(func() {
 				defer batchExe.rateLimiter.PutToken()
 				var singleBatchBackoffer *retry.Backoffer
 				if _, ok := batchExe.action.(actionCommit); ok {
@@ -1945,7 +1946,7 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 				}
 				// Backoff time in the 2nd phase of a non-async-commit txn is added
 				// in the commitTxn method, so we don't add it here.
-			}()
+			})
 		} else {
 			logutil.Logger(batchExe.backoffer.GetCtx()).Info("break startWorker",
 				zap.Stringer("action", batchExe.action), zap.Int("batch size", len(batches)),

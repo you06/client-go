@@ -749,31 +749,32 @@ func newReplicaSelector(
 		)
 	}
 
-	var state selectorState
-	if !req.ReplicaReadType.IsFollowerRead() {
-		if regionCache.enableForwarding && regionStore.proxyTiKVIdx >= 0 {
-			state = &accessByKnownProxy{leaderIdx: regionStore.workTiKVIdx}
-		} else {
-			state = &accessKnownLeader{leaderIdx: regionStore.workTiKVIdx}
-		}
-	} else {
-		option := storeSelectorOp{}
-		for _, op := range opts {
-			op(&option)
-		}
-		if req.ReplicaReadType == kv.ReplicaReadPreferLeader {
-			WithPerferLeader()(&option)
-		}
-		tryLeader := req.ReplicaReadType == kv.ReplicaReadMixed || req.ReplicaReadType == kv.ReplicaReadPreferLeader
-		state = &accessFollower{
-			tryLeader:         tryLeader,
-			isGlobalStaleRead: req.IsGlobalStaleRead(),
-			option:            option,
-			leaderIdx:         regionStore.workTiKVIdx,
-			lastIdx:           -1,
-			learnerOnly:       req.ReplicaReadType == kv.ReplicaReadLearner,
-		}
-	}
+	state := &accessKnownLeader{leaderIdx: regionStore.workTiKVIdx}
+	//var state selectorState
+	//if !req.ReplicaReadType.IsFollowerRead() {
+	//	if regionCache.enableForwarding && regionStore.proxyTiKVIdx >= 0 {
+	//		state = &accessByKnownProxy{leaderIdx: regionStore.workTiKVIdx}
+	//	} else {
+	//		state = &accessKnownLeader{leaderIdx: regionStore.workTiKVIdx}
+	//	}
+	//} else {
+	//	option := storeSelectorOp{}
+	//	for _, op := range opts {
+	//		op(&option)
+	//	}
+	//	if req.ReplicaReadType == kv.ReplicaReadPreferLeader {
+	//		WithPerferLeader()(&option)
+	//	}
+	//	tryLeader := req.ReplicaReadType == kv.ReplicaReadMixed || req.ReplicaReadType == kv.ReplicaReadPreferLeader
+	//	state = &accessFollower{
+	//		tryLeader:         tryLeader,
+	//		isGlobalStaleRead: req.IsGlobalStaleRead(),
+	//		option:            option,
+	//		leaderIdx:         regionStore.workTiKVIdx,
+	//		lastIdx:           -1,
+	//		learnerOnly:       req.ReplicaReadType == kv.ReplicaReadLearner,
+	//	}
+	//}
 
 	return &replicaSelector{
 		regionCache,
@@ -1340,7 +1341,7 @@ func (s *RegionRequestSender) sendReqToRegion(
 	if e := tikvrpc.SetContext(req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
 		return nil, false, err
 	}
-	rpcCtx.contextPatcher.applyTo(&req.Context)
+	//rpcCtx.contextPatcher.applyTo(&req.Context)
 	// judge the store limit switch.
 	if limit := kv.StoreLimit.Load(); limit > 0 {
 		if err := s.getStoreToken(rpcCtx.Store, limit); err != nil {

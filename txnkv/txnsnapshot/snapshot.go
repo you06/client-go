@@ -365,6 +365,7 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *retry.Backoffer, batch batchKeys, 
 			s.mergeRegionRequestStats(cli.Stats)
 		}()
 	}
+	isStaleness := s.mu.isStaleness
 	s.mu.RUnlock()
 
 	pending := batch.keys
@@ -386,7 +387,6 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *retry.Backoffer, batch batchKeys, 
 			s.mu.resourceGroupTagger(req)
 		}
 		scope := s.mu.readReplicaScope
-		isStaleness := s.mu.isStaleness
 		matchStoreLabels := s.mu.matchStoreLabels
 		replicaAdjuster := s.mu.replicaReadAdjuster
 		s.mu.RUnlock()
@@ -442,9 +442,6 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *retry.Backoffer, batch batchKeys, 
 			locks      []*txnlock.Lock
 		)
 		if keyErr := batchGetResp.GetError(); keyErr != nil {
-			if isStaleness {
-				req.DisableStaleRead()
-			}
 			// If a response-level error happens, skip reading pairs.
 			lock, err := txnlock.ExtractLockFromKeyErr(keyErr)
 			if err != nil {
@@ -482,9 +479,8 @@ func (s *KVSnapshot) batchGetSingleRegion(bo *retry.Backoffer, batch batchKeys, 
 			} else {
 				cli.UpdateResolvingLocks(locks, s.version, *resolvingRecordToken)
 			}
-			if isStaleness {
-				req.DisableStaleRead()
-			}
+			// we need to read from leader after resolving the lock.
+			isStaleness = false
 			resolveLocksOpts := txnlock.ResolveLocksOptions{
 				CallerStartTS: s.version,
 				Locks:         locks,
@@ -662,6 +658,7 @@ func (s *KVSnapshot) get(ctx context.Context, bo *retry.Backoffer, k []byte) ([]
 				return nil, err
 			}
 			if firstLock == nil {
+				// we need to read from leader after resolving the lock.
 				if isStaleness {
 					req.DisableStaleRead()
 				}

@@ -2,7 +2,7 @@ name: Integration Test
 
 on:
   push:
-    branches: [ master, tidb-6.5 ]
+    branches: [ master, tidb-6.5, tidb-6.5-stale-patch-test ]
   pull_request:
     branches: [ master, tidb-6.5 ]
 

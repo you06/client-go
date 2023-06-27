@@ -2,7 +2,7 @@ name: Compatibility Test
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, tidb-6.5-stale-patch-test ]
   pull_request:
     branches: [ master ]
 

@@ -558,9 +558,7 @@ func (state *accessFollower) next(bo *retry.Backoffer, selector *replicaSelector
 			selector.targetIdx = idx
 			break
 		}
-		if selectReplica.isEpochStale() &&
-			selectReplica.store.getResolveState() == resolved &&
-			selectReplica.store.getLivenessState() == reachable {
+		if selectReplica.isEpochStale() {
 			reloadRegion = true
 		}
 	}

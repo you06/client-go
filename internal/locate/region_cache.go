@@ -127,6 +127,8 @@ type Region struct {
 	lastAccess    int64          // last region access time, see checkRegionCacheTTL
 	invalidReason InvalidReason  // the reason why the region is invalidated
 	asyncReload   int32          // the region need to be reloaded in async mode
+	downPeers     []*metapb.Peer
+	pendingPeers  []*metapb.Peer
 }
 
 // AccessIndex represent the index for accessIndex array
@@ -239,7 +241,7 @@ func (r *regionStore) filterStoreCandidate(aidx AccessIndex, op *storeSelectorOp
 }
 
 func newRegion(bo *retry.Backoffer, c *RegionCache, pdRegion *pd.Region) (*Region, error) {
-	r := &Region{meta: pdRegion.Meta}
+	r := &Region{meta: pdRegion.Meta, downPeers: pdRegion.DownPeers, pendingPeers: pdRegion.PendingPeers}
 	// regionStore pull used store from global store map
 	// to avoid acquire storeMu in later access.
 	rs := &regionStore{
@@ -1134,7 +1136,7 @@ func (c *RegionCache) LocateRegionByID(bo *retry.Backoffer, regionID uint64) (*K
 	c.mu.RUnlock()
 	if r != nil {
 		if r.checkNeedReloadAndMarkUpdated() {
-			lr, _, err := c.loadRegionByID(bo, regionID)
+			lr, err := c.loadRegionByID(bo, regionID)
 			if err != nil {
 				// ignore error and use old region info.
 				logutil.Logger(bo.GetCtx()).Error("load region failure",
@@ -1155,7 +1157,7 @@ func (c *RegionCache) LocateRegionByID(bo *retry.Backoffer, regionID uint64) (*K
 		return loc, nil
 	}
 
-	r, _, err := c.loadRegionByID(bo, regionID)
+	r, err := c.loadRegionByID(bo, regionID)
 	if err != nil {
 		return nil, err
 	}
@@ -1186,7 +1188,7 @@ func (c *RegionCache) scheduleReloadRegion(region *Region) {
 
 func (c *RegionCache) reloadRegion(regionID uint64) {
 	bo := retry.NewNoopBackoff(c.ctx)
-	lr, downOrPending, err := c.loadRegionByID(bo, regionID)
+	lr, err := c.loadRegionByID(bo, regionID)
 	if err != nil {
 		// ignore error and use old region info.
 		logutil.Logger(bo.GetCtx()).Error("load region failure",
@@ -1196,13 +1198,57 @@ func (c *RegionCache) reloadRegion(regionID uint64) {
 		}
 		return
 	}
-	// immediately schedule next reload because there are down or pending peers.
-	if downOrPending {
+	changed := true
+	if len(lr.downPeers) > 0 || len(lr.pendingPeers) > 0 {
+		// immediately schedule next reload because there are down or pending peers.
 		c.scheduleReloadRegion(lr)
+		// when unavailable peers are not changed, do not update region info.
+		changed = c.pendingOrDownChanged(lr)
 	}
-	c.mu.Lock()
-	c.insertRegionToCache(lr, false)
-	c.mu.Unlock()
+	if changed {
+		c.mu.Lock()
+		c.insertRegionToCache(lr, false)
+		c.mu.Unlock()
+	}
+}
+
+func (c *RegionCache) pendingOrDownChanged(new *Region) bool {
+	var prevRegion *Region
+	c.mu.RLock()
+	ver, ok := c.mu.latestVersions[new.meta.Id]
+	if ok {
+		prevRegion, ok = c.mu.regions[ver]
+	}
+	c.mu.RUnlock()
+	if !ok {
+		return true
+	}
+
+	peerStateChange := func(peer *metapb.Peer) bool {
+		for _, p := range prevRegion.downPeers {
+			if peer.StoreId == p.StoreId {
+				return false
+			}
+		}
+		for _, p := range prevRegion.pendingPeers {
+			if peer.StoreId == p.StoreId {
+				return false
+			}
+		}
+		return true
+	}
+
+	for _, p := range new.downPeers {
+		if peerStateChange(p) {
+			return true
+		}
+	}
+	for _, p := range new.pendingPeers {
+		if peerStateChange(p) {
+			return true
+		}
+	}
+	return false
 }
 
 // GroupKeysByRegion separates keys into groups by their belonging Regions.
@@ -1556,7 +1602,7 @@ func (c *RegionCache) loadRegion(bo *retry.Backoffer, key []byte, isEndKey bool)
 }
 
 // loadRegionByID loads region from pd client, and picks the first peer as leader.
-func (c *RegionCache) loadRegionByID(bo *retry.Backoffer, regionID uint64) (*Region, bool, error) {
+func (c *RegionCache) loadRegionByID(bo *retry.Backoffer, regionID uint64) (*Region, error) {
 	ctx := bo.GetCtx()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("loadRegionByID", opentracing.ChildOf(span.Context()))
@@ -1568,7 +1614,7 @@ func (c *RegionCache) loadRegionByID(bo *retry.Backoffer, regionID uint64) (*Reg
 		if backoffErr != nil {
 			err := bo.Backoff(retry.BoPDRPC, backoffErr)
 			if err != nil {
-				return nil, false, errors.WithStack(err)
+				return nil, errors.WithStack(err)
 			}
 		}
 		start := time.Now()
@@ -1581,20 +1627,19 @@ func (c *RegionCache) loadRegionByID(bo *retry.Backoffer, regionID uint64) (*Reg
 		}
 		if err != nil {
 			if isDecodeError(err) {
-				return nil, false, errors.Errorf("failed to decode region range key, regionID: %q, err: %v", regionID, err)
+				return nil, errors.Errorf("failed to decode region range key, regionID: %q, err: %v", regionID, err)
 			}
 			backoffErr = errors.Errorf("loadRegion from PD failed, regionID: %v, err: %v", regionID, err)
 			continue
 		}
 		if reg == nil || reg.Meta == nil {
-			return nil, false, errors.Errorf("region not found for regionID %d", regionID)
+			return nil, errors.Errorf("region not found for regionID %d", regionID)
 		}
 		filterUnavailablePeers(reg)
 		if len(reg.Meta.Peers) == 0 {
-			return nil, false, errors.New("receive Region with no available peer")
+			return nil, errors.New("receive Region with no available peer")
 		}
-		region, err := newRegion(bo, c, reg)
-		return region, len(reg.DownPeers) > 0 || len(reg.PendingPeers) > 0, err
+		return newRegion(bo, c, reg)
 	}
 }
 
@@ -1977,7 +2022,7 @@ func (c *RegionCache) UpdateBucketsIfNeeded(regionID RegionVerID, latestBucketsV
 		// TODO(youjiali1995): use singleflight.
 		go func() {
 			bo := retry.NewBackoffer(context.Background(), 20000)
-			new, _, err := c.loadRegionByID(bo, regionID.id)
+			new, err := c.loadRegionByID(bo, regionID.id)
 			if err != nil {
 				logutil.Logger(bo.GetCtx()).Error("failed to update buckets",
 					zap.String("region", regionID.String()), zap.Uint64("bucketsVer", bucketsVer),

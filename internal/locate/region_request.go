@@ -562,7 +562,9 @@ func (state *accessFollower) next(bo *retry.Backoffer, selector *replicaSelector
 			reloadRegion = true
 		}
 	}
-	if reloadRegion {
+	// when targetIdx < 0, the region will be invalidated later, and it'll reload region cache in sync mode,
+	// do not need to schedule reload task.
+	if reloadRegion && selector.targetIdx >= 0 {
 		selector.regionCache.scheduleReloadRegion(selector.region)
 	}
 	// If there is no candidate, fallback to the leader.

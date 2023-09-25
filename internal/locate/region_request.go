@@ -693,14 +693,15 @@ func (state *accessFollower) isCandidate(idx AccessIndex, replica *replica) bool
 	if replica.isEpochStale() || replica.isExhausted(1) || replica.store.getLivenessState() == unreachable || replica.deadlineErrUsingConfTimeout {
 		return false
 	}
-	if state.option.leaderOnly && idx == state.leaderIdx {
-		// The request can only be sent to the leader.
-		return true
-	} else if !state.tryLeader && idx == state.leaderIdx {
-		// The request cannot be sent to leader.
-		return false
-	}
-	return replica.store.IsLabelsMatch(state.option.labels)
+	return idx != state.leaderIdx
+	//if state.option.leaderOnly && idx == state.leaderIdx {
+	//	// The request can only be sent to the leader.
+	//	return true
+	//} else if !state.tryLeader && idx == state.leaderIdx {
+	//	// The request cannot be sent to leader.
+	//	return false
+	//}
+	//return replica.store.IsLabelsMatch(state.option.labels)
 }
 
 type invalidStore struct {

@@ -716,7 +716,7 @@ func (state *accessFollower) isCandidate(idx AccessIndex, replica *replica) bool
 	if idx == state.leaderIdx {
 		return false
 	}
-	return true
+	return replica.store.storeID != idleStore.Load()
 	//if state.option.leaderOnly && idx == state.leaderIdx {
 	//	// The request can only be sent to the leader.
 	//	return true

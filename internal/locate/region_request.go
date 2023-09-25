@@ -38,7 +38,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -603,19 +602,6 @@ func (state *accessFollower) next(bo *retry.Backoffer, selector *replicaSelector
 		state.lastIdx++
 	}
 
-	findIdleStore := false
-	before := idleStore.Load()
-	for _, r := range selector.replicas {
-		if r.store.storeID == before {
-			findIdleStore = true
-			break
-		}
-	}
-	if !findIdleStore {
-		after := selector.replicas[0].store.storeID
-		idleStore.CompareAndSwap(before, after)
-	}
-
 	reloadRegion := false
 	for i := 0; i < len(selector.replicas) && !state.option.leaderOnly; i++ {
 		idx := AccessIndex((int(state.lastIdx) + i) % len(selector.replicas))
@@ -702,12 +688,6 @@ func (state *accessFollower) onSendFailure(bo *retry.Backoffer, selector *replic
 	}
 }
 
-var idleStore atomic.Uint64
-
-func init() {
-	idleStore.Store(math.MaxUint64)
-}
-
 func (state *accessFollower) isCandidate(idx AccessIndex, replica *replica) bool {
 	// the epoch is staled or retry exhausted, or the store is unreachable.
 	if replica.isEpochStale() || replica.isExhausted(1) || replica.store.getLivenessState() == unreachable || replica.deadlineErrUsingConfTimeout {
@@ -716,7 +696,7 @@ func (state *accessFollower) isCandidate(idx AccessIndex, replica *replica) bool
 	if idx == state.leaderIdx {
 		return false
 	}
-	return replica.store.storeID != idleStore.Load()
+	return replica.store.GetAddr() != "tikv-1-peer:20160"
 	//if state.option.leaderOnly && idx == state.leaderIdx {
 	//	// The request can only be sent to the leader.
 	//	return true

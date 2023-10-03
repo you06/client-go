@@ -40,6 +40,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/sync/errgroup"
 	"math"
 	"math/rand"
 	"runtime/trace"
@@ -161,6 +162,9 @@ type KVTxn struct {
 	aggressiveLockingDirty   bool
 
 	forUpdateTSChecks map[string]uint64
+
+	parallelPK           atomic.Pointer[[]byte]
+	parallelWriteBuffers []parallelWriteBuffer
 }
 
 // NewTiKVTxn creates a new KVTxn.
@@ -1471,4 +1475,78 @@ func (txn *KVTxn) SetRequestSourceType(tp string) {
 // SetExplicitRequestSourceType sets the explicit type of the request source.
 func (txn *KVTxn) SetExplicitRequestSourceType(tp string) {
 	txn.RequestSource.SetExplicitRequestSourceType(tp)
+}
+
+func (txn *KVTxn) ParallelInitWriter(concurrency int) {
+	txn.parallelWriteBuffers = make([]parallelWriteBuffer, 0, concurrency)
+	for i := 0; i < concurrency; i++ {
+		txn.parallelWriteBuffers = append(txn.parallelWriteBuffers, parallelWriteBuffer{
+			buf: unionstore.NewUnionStore(nil).GetMemBuffer(),
+		})
+	}
+}
+
+func (txn *KVTxn) ParallelSet(n int, key []byte, value []byte) error {
+	if err := txn.parallelWriteBuffers[n].buf.Set(key, value); err != nil {
+		return nil
+	}
+	if txn.parallelWriteBuffers[n].buf.Size() >= FLUSH_SIZE {
+		return txn.parallelWriteBuffers[n].flush(txn)
+	}
+	return nil
+}
+
+func (txn *KVTxn) ParallelFlush() error {
+	ctx := context.Background()
+	g, ctx := errgroup.WithContext(ctx)
+	for i := range txn.parallelWriteBuffers {
+		writeBuffer := txn.parallelWriteBuffers[i]
+		if writeBuffer.buf.Size() > 0 {
+			g.Go(func() error {
+				return writeBuffer.flush(txn)
+			})
+		}
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	return nil
+}
+
+const FLUSH_SIZE = 10000
+
+type parallelWriteBuffer struct {
+	buf *unionstore.MemDB
+}
+
+func (p *parallelWriteBuffer) flush(txn *KVTxn) error {
+	ctx := context.Background()
+	newTxn, err := NewTiKVTxn(txn.store, txn.snapshot, txn.startTS, nil)
+	if err != nil {
+		return err
+	}
+	committer, err := newTwoPhaseCommitter(newTxn, 0)
+	if err != nil {
+		return err
+	}
+	if err = committer.initKeysAndMutations(ctx); err != nil {
+		return err
+	}
+	var (
+		pk  []byte
+		ppk *[]byte
+	)
+	if ppk = txn.parallelPK.Load(); ppk == nil {
+		pk = committer.primary()
+		txn.parallelPK.CompareAndSwap(nil, &pk)
+		ppk = txn.parallelPK.Load()
+	}
+	pk = *ppk
+	committer.primaryKey = pk
+	bo := retry.NewBackofferWithVars(ctx, int(PrewriteMaxBackoff.Load()), nil)
+	if err = committer.prewriteMutations(bo, committer.mutations); err != nil {
+		return err
+	}
+	p.buf = unionstore.NewUnionStore(nil).GetMemBuffer()
+	return nil
 }

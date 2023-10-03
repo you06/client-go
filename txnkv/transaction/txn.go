@@ -164,6 +164,8 @@ type KVTxn struct {
 	forUpdateTSChecks map[string]uint64
 
 	parallelPK           atomic.Pointer[[]byte]
+	parallelMin          atomic.Pointer[[]byte]
+	parallelMax          atomic.Pointer[[]byte]
 	parallelWriteBuffers []parallelWriteBuffer
 }
 
@@ -1434,6 +1436,11 @@ func (txn *KVTxn) GetMemBuffer() *unionstore.MemDB {
 	return txn.us.GetMemBuffer()
 }
 
+// ReplaceMemBuffer replace the MemBuffer binding to this transaction.
+func (txn *KVTxn) ReplaceMemBuffer(memBuffer *unionstore.MemDB) {
+	txn.us.ReplaceMemBuffer(memBuffer)
+}
+
 // GetSnapshot returns the Snapshot binding to this transaction.
 func (txn *KVTxn) GetSnapshot() *txnsnapshot.KVSnapshot {
 	return txn.snapshot
@@ -1510,7 +1517,69 @@ func (txn *KVTxn) ParallelFlush() error {
 	if err := g.Wait(); err != nil {
 		return err
 	}
+	if err := txn.ParallelCommitPK(); err != nil {
+		return err
+	}
+	go func() {
+		if err := txn.ParallelCommitSecondaries(); err != nil {
+			logutil.Logger(ctx).Warn("[Parallel Txn] parallel commit secondaries failed.", zap.Error(err))
+		}
+	}()
 	return nil
+}
+
+func (txn *KVTxn) ParallelCommitPK() error {
+	ppk := txn.parallelPK.Load()
+	if ppk == nil {
+		// empty txn
+		return nil
+	}
+	ctx := context.Background()
+	newTxn, err := NewTiKVTxn(txn.store, txn.snapshot, txn.startTS, nil)
+	if err != nil {
+		return err
+	}
+	newTxn.Set(*ppk, []byte{0})
+	committer, err := newTwoPhaseCommitter(newTxn, 0)
+	if err != nil {
+		return err
+	}
+	if err = committer.initKeysAndMutations(ctx); err != nil {
+		return err
+	}
+	bo := retry.NewBackofferWithVars(ctx, int(CommitMaxBackoff), nil)
+	return committer.commitMutations(bo, committer.mutations)
+}
+
+func (txn *KVTxn) ParallelCommitSecondaries() error {
+	ppk := txn.parallelPK.Load()
+	if ppk == nil {
+		// empty txn
+		return nil
+	}
+	ctx := context.Background()
+	bo := retry.NewBackofferWithVars(ctx, int(CommitMaxBackoff), nil)
+	regionCache := txn.store.GetRegionCache()
+	regions, err := regionCache.LoadRegionsInKeyRange(bo, *txn.parallelMin.Load(), *txn.parallelMax.Load())
+	if err != nil {
+		return err
+	}
+
+	_ = regions // TOOD: handle the regions
+
+	newTxn, err := NewTiKVTxn(txn.store, txn.snapshot, txn.startTS, nil)
+	if err != nil {
+		return err
+	}
+	newTxn.Set(*ppk, []byte{0})
+	committer, err := newTwoPhaseCommitter(newTxn, 0)
+	if err != nil {
+		return err
+	}
+	if err = committer.initKeysAndMutations(ctx); err != nil {
+		return err
+	}
+	return committer.commitMutations(bo, committer.mutations)
 }
 
 const FLUSH_SIZE = 10000
@@ -1525,6 +1594,30 @@ func (p *parallelWriteBuffer) flush(txn *KVTxn) error {
 	if err != nil {
 		return err
 	}
+
+	{
+		min, max := p.buf.Min(), p.buf.Max()
+		for {
+			pmin := txn.parallelMin.Load()
+			if pmin != nil && bytes.Compare(*pmin, min) <= 0 {
+				break
+			}
+			if txn.parallelMin.CompareAndSwap(pmin, &min) {
+				break
+			}
+		}
+		for {
+			pmax := txn.parallelMax.Load()
+			if pmax != nil && bytes.Compare(*pmax, max) >= 0 {
+				break
+			}
+			if txn.parallelMax.CompareAndSwap(pmax, &max) {
+				break
+			}
+		}
+	}
+
+	newTxn.ReplaceMemBuffer(p.buf)
 	committer, err := newTwoPhaseCommitter(newTxn, 0)
 	if err != nil {
 		return err

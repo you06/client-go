@@ -79,6 +79,28 @@ func (db *MemDB) IterReverse(k []byte, lowerBound []byte) (Iterator, error) {
 	return i, nil
 }
 
+// Min returns the start key of current MemDB.
+func (db *MemDB) Min() []byte {
+	iter, _ := db.Iter(nil, nil)
+	var key []byte
+	if iter.Valid() {
+		key = iter.Key()
+	}
+	iter.Close()
+	return key
+}
+
+// Max returns the end key of current MemDB.
+func (db *MemDB) Max() []byte {
+	iter, _ := db.IterReverse(nil, nil)
+	var key []byte
+	if iter.Valid() {
+		key = iter.Key()
+	}
+	iter.Close()
+	return key
+}
+
 // IterWithFlags returns a MemdbIterator.
 func (db *MemDB) IterWithFlags(k []byte, upperBound []byte) *MemdbIterator {
 	i := &MemdbIterator{

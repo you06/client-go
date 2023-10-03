@@ -46,6 +46,7 @@ type Iterator interface {
 	Valid() bool
 	Key() []byte
 	Value() []byte
+
 	Next() error
 	Close()
 }
@@ -93,6 +94,11 @@ func NewUnionStore(snapshot uSnapshot) *KVUnionStore {
 // GetMemBuffer return the MemBuffer binding to this unionStore.
 func (us *KVUnionStore) GetMemBuffer() *MemDB {
 	return us.memBuffer
+}
+
+// ReplaceMemBuffer replace the MemBuffer binding to this unionStore.
+func (us *KVUnionStore) ReplaceMemBuffer(memBuf *MemDB) {
+	us.memBuffer = memBuf
 }
 
 // Get implements the Retriever interface.

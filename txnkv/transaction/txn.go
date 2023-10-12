@@ -40,6 +40,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/tikv/client-go/v2/internal/client"
+	"github.com/tikv/client-go/v2/internal/locate"
 	"golang.org/x/sync/errgroup"
 	"math"
 	"math/rand"
@@ -1485,6 +1487,9 @@ func (txn *KVTxn) SetExplicitRequestSourceType(tp string) {
 }
 
 func (txn *KVTxn) ParallelInitWriter(concurrency int) {
+	if len(txn.parallelWriteBuffers) == concurrency {
+		return
+	}
 	txn.parallelWriteBuffers = make([]parallelWriteBuffer, 0, concurrency)
 	for i := 0; i < concurrency; i++ {
 		txn.parallelWriteBuffers = append(txn.parallelWriteBuffers, parallelWriteBuffer{
@@ -1506,6 +1511,7 @@ func (txn *KVTxn) ParallelSet(n int, key []byte, value []byte) error {
 func (txn *KVTxn) ParallelFlush() error {
 	ctx := context.Background()
 	g, ctx := errgroup.WithContext(ctx)
+	// prewrite the data not yet flushed.
 	for i := range txn.parallelWriteBuffers {
 		writeBuffer := txn.parallelWriteBuffers[i]
 		if writeBuffer.buf.Size() > 0 {
@@ -1517,18 +1523,24 @@ func (txn *KVTxn) ParallelFlush() error {
 	if err := g.Wait(); err != nil {
 		return err
 	}
-	if err := txn.ParallelCommitPK(); err != nil {
+
+	commitTS, err := txn.store.GetTimestampWithRetry(retry.NewBackofferWithVars(ctx, TsoMaxBackoff, txn.vars), txn.GetScope())
+	if err != nil {
+		return err
+	}
+
+	if err := txn.ParallelCommitPK(commitTS); err != nil {
 		return err
 	}
 	go func() {
-		if err := txn.ParallelCommitSecondaries(); err != nil {
+		if err := txn.ParallelCommitSecondaries(commitTS); err != nil {
 			logutil.Logger(ctx).Warn("[Parallel Txn] parallel commit secondaries failed.", zap.Error(err))
 		}
 	}()
 	return nil
 }
 
-func (txn *KVTxn) ParallelCommitPK() error {
+func (txn *KVTxn) ParallelCommitPK(commitTS uint64) error {
 	ppk := txn.parallelPK.Load()
 	if ppk == nil {
 		// empty txn
@@ -1544,6 +1556,7 @@ func (txn *KVTxn) ParallelCommitPK() error {
 	if err != nil {
 		return err
 	}
+	committer.commitTS = commitTS
 	if err = committer.initKeysAndMutations(ctx); err != nil {
 		return err
 	}
@@ -1551,7 +1564,7 @@ func (txn *KVTxn) ParallelCommitPK() error {
 	return committer.commitMutations(bo, committer.mutations)
 }
 
-func (txn *KVTxn) ParallelCommitSecondaries() error {
+func (txn *KVTxn) ParallelCommitSecondaries(commitTS uint64) error {
 	ppk := txn.parallelPK.Load()
 	if ppk == nil {
 		// empty txn
@@ -1565,21 +1578,46 @@ func (txn *KVTxn) ParallelCommitSecondaries() error {
 		return err
 	}
 
-	_ = regions // TOOD: handle the regions
-
-	newTxn, err := NewTiKVTxn(txn.store, txn.snapshot, txn.startTS, nil)
-	if err != nil {
-		return err
+	sender := locate.NewRegionRequestSender(regionCache, txn.store.GetTiKVClient())
+	for _, region := range regions {
+		req := tikvrpc.NewRequest(tikvrpc.CmdCommit, &kvrpcpb.CommitRequest{
+			StartVersion:  txn.startTS,
+			Keys:          nil,
+			CommitVersion: txn.commitTS,
+			Bounds:        [][]byte{region.GetMeta().StartKey, region.GetMeta().EndKey},
+		}, kvrpcpb.Context{
+			Priority:         kvrpcpb.CommandPri_Low,
+			SyncLog:          txn.syncLog,
+			ResourceGroupTag: txn.resourceGroupTag,
+			DiskFullOpt:      txn.diskFullOpt,
+			TxnSource:        txn.txnSource,
+			RequestSource:    txn.GetRequestSource(),
+			ResourceControlContext: &kvrpcpb.ResourceControlContext{
+				ResourceGroupName: txn.resourceGroupName,
+			},
+		})
+		for {
+			logutil.Logger(ctx).Info("[Parallel Txn] commit secondary region", zap.Uint64("regionID", region.GetID()))
+			resp, _, err := sender.SendReq(bo, req, region.VerID(), client.ReadTimeoutMedium)
+			if err != nil {
+				return err
+			}
+			regionErr, err := resp.GetRegionError()
+			if err != nil {
+				return err
+			}
+			if regionErr != nil {
+				logutil.Logger(ctx).Info("[Parallel Txn] commit secondary region region error",
+					zap.Uint64("regionID", region.GetID()),
+					zap.Stringer("err", regionErr))
+				continue
+			}
+			logutil.Logger(ctx).Info("[Parallel Txn] commit secondary region success",
+				zap.Uint64("regionID", region.GetID()))
+			break
+		}
 	}
-	newTxn.Set(*ppk, []byte{0})
-	committer, err := newTwoPhaseCommitter(newTxn, 0)
-	if err != nil {
-		return err
-	}
-	if err = committer.initKeysAndMutations(ctx); err != nil {
-		return err
-	}
-	return committer.commitMutations(bo, committer.mutations)
+	return nil
 }
 
 const FLUSH_SIZE = 10000
@@ -1590,7 +1628,10 @@ type parallelWriteBuffer struct {
 
 func (p *parallelWriteBuffer) flush(txn *KVTxn) error {
 	ctx := context.Background()
-	newTxn, err := NewTiKVTxn(txn.store, txn.snapshot, txn.startTS, nil)
+	newTxn, err := NewTiKVTxn(txn.store, txn.snapshot, txn.startTS, &TxnOptions{
+		TxnScope: txn.scope,
+		StartTS:  &txn.startTS,
+	})
 	if err != nil {
 		return err
 	}

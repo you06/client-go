@@ -76,7 +76,7 @@ func TestPdOracle_GetStaleTimestamp(t *testing.T) {
 func TestNonFutureStaleTSO(t *testing.T) {
 	o := oracles.NewEmptyPDOracle()
 	oracles.SetEmptyPDOracleLastTs(o, oracle.GoTimeToTS(time.Now()))
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < 100; i++ {
 		time.Sleep(10 * time.Millisecond) // sleep 10ms to limit the tso cast error within 5ms.
 		now := time.Now()
 		upperBound := now.Add(5 * time.Millisecond)

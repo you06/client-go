@@ -72,3 +72,35 @@ func TestPdOracle_GetStaleTimestamp(t *testing.T) {
 	assert.NotNil(t, err)
 	assert.Regexp(t, ".*invalid prevSecond.*", err.Error())
 }
+
+func TestNonFutureStaleTSO(t *testing.T) {
+	o := oracles.NewEmptyPDOracle()
+	oracles.SetEmptyPDOracleLastTs(o, oracle.GoTimeToTS(time.Now()))
+	for i := 0; i < 10000; i++ {
+		time.Sleep(2 * time.Millisecond) // sleep 2ms to limit the tso cast error within 1ms.
+		now := time.Now()
+		upperBound := now.Add(time.Millisecond)
+
+		closeCh := make(chan struct{})
+		go func() {
+			time.Sleep(100 * time.Microsecond)
+			oracles.SetEmptyPDOracleLastTs(o, oracle.GoTimeToTS(now))
+			close(closeCh)
+		}()
+	CHECK:
+		for {
+			select {
+			case <-closeCh:
+				break CHECK
+			default:
+				ts, err := o.GetStaleTimestamp(context.Background(), oracle.GlobalTxnScope, 0)
+				assert.Nil(t, err)
+				staleTime := oracle.GetTimeFromTS(ts)
+				if staleTime.After(upperBound) {
+					assert.Less(t, staleTime, upperBound, i)
+					t.FailNow()
+				}
+			}
+		}
+	}
+}

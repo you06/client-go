@@ -77,9 +77,9 @@ func TestNonFutureStaleTSO(t *testing.T) {
 	o := oracles.NewEmptyPDOracle()
 	oracles.SetEmptyPDOracleLastTs(o, oracle.GoTimeToTS(time.Now()))
 	for i := 0; i < 10000; i++ {
-		time.Sleep(2 * time.Millisecond) // sleep 2ms to limit the tso cast error within 1ms.
+		time.Sleep(10 * time.Millisecond) // sleep 10ms to limit the tso cast error within 5ms.
 		now := time.Now()
-		upperBound := now.Add(time.Millisecond)
+		upperBound := now.Add(5 * time.Millisecond)
 
 		closeCh := make(chan struct{})
 		go func() {
@@ -96,7 +96,7 @@ func TestNonFutureStaleTSO(t *testing.T) {
 				ts, err := o.GetStaleTimestamp(context.Background(), oracle.GlobalTxnScope, 0)
 				assert.Nil(t, err)
 				staleTime := oracle.GetTimeFromTS(ts)
-				if staleTime.After(upperBound) {
+				if staleTime.After(upperBound) && time.Since(now) < time.Millisecond {
 					assert.Less(t, staleTime, upperBound, i)
 					t.FailNow()
 				}

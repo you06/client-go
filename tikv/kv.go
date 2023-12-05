@@ -831,6 +831,13 @@ func WithStartTS(startTS uint64) TxnOption {
 	}
 }
 
+// WithPrewriteAheadWorker sets the PrewriteAheadWorker to n, if n > 0, prewrite-ahead will be enabled.
+func WithPrewriteAheadWorker(n int) TxnOption {
+	return func(st *transaction.TxnOptions) {
+		st.PrewriteAheadWorker = n
+	}
+}
+
 // TODO: remove once tidb and br are ready
 
 // KVTxn contains methods to interact with a TiKV transaction.

@@ -67,6 +67,7 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 // MaxTxnTimeUse is the max time a Txn may use (in ms) from its begin to commit.
@@ -110,8 +111,9 @@ func (e *tempLockBufferEntry) trySkipLockingOnRetry(returnValue bool, checkExist
 // TxnOptions indicates the option when beginning a transaction.
 // TxnOptions are set by the TxnOption values passed to Begin
 type TxnOptions struct {
-	TxnScope string
-	StartTS  *uint64
+	TxnScope            string
+	StartTS             *uint64
+	PrewriteAheadWorker int
 }
 
 // KVTxn contains methods to interact with a TiKV transaction.
@@ -161,6 +163,8 @@ type KVTxn struct {
 	aggressiveLockingDirty   atomic.Bool
 
 	forUpdateTSChecks map[string]uint64
+
+	prewriteAhead *prewriteAhead
 }
 
 // NewTiKVTxn creates a new KVTxn.
@@ -179,6 +183,7 @@ func NewTiKVTxn(store kvstore, snapshot *txnsnapshot.KVSnapshot, startTS uint64,
 		enable1PC:         cfg.Enable1PC,
 		diskFullOpt:       kvrpcpb.DiskFullOpt_NotAllowedOnFull,
 		RequestSource:     snapshot.RequestSource,
+		prewriteAhead:     newPrewriteAhead(snapshot, options.PrewriteAheadWorker),
 	}
 	return newTiKVTxn, nil
 }
@@ -1471,4 +1476,54 @@ func (txn *KVTxn) SetRequestSourceType(tp string) {
 // SetExplicitRequestSourceType sets the explicit type of the request source.
 func (txn *KVTxn) SetExplicitRequestSourceType(tp string) {
 	txn.RequestSource.SetExplicitRequestSourceType(tp)
+}
+
+type prewriteAhead struct {
+	eg            *errgroup.Group
+	errStop       atomic.Pointer[error]
+	unistorePools chan *unionstore.KVUnionStore
+}
+
+func newPrewriteAhead(snapshot *txnsnapshot.KVSnapshot, worker int) *prewriteAhead {
+	if worker <= 0 {
+		return nil
+	}
+	pa := &prewriteAhead{
+		eg:            new(errgroup.Group),
+		unistorePools: make(chan *unionstore.KVUnionStore, worker),
+	}
+	for i := 0; i < worker; i++ {
+		pa.unistorePools <- unionstore.NewUnionStore(snapshot)
+	}
+	return pa
+}
+
+const PrewriteFlushedKeyThreshold = 10000
+
+// PrewriteFlushMemBuffer flushes the mem buffer to the underlying storage by prewrite requests.
+func (txn *KVTxn) PrewriteFlushMemBuffer(force bool) error {
+	if txn.prewriteAhead == nil {
+		return errors.New("memBufferPool is nil, this txn should not be prewritten ahead")
+	}
+	if txn.us.GetMemBuffer().Len() < PrewriteFlushedKeyThreshold && !force {
+		return nil
+	}
+	if errPointer := txn.prewriteAhead.errStop.Load(); errPointer != nil {
+		return *errPointer
+	}
+	currentUs := txn.us
+	emptyUs := <-txn.prewriteAhead.unistorePools
+	txn.us = emptyUs
+	go func() {
+		txn.prewriteAhead.eg.Go(func() error {
+			_ = currentUs
+			var err error
+			// err = prewriteMutations(...)
+			if err != nil {
+				txn.prewriteAhead.errStop.CompareAndSwap(nil, &err)
+			}
+			return err
+		})
+	}()
+	return nil
 }

@@ -22,6 +22,8 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 )
 
+type FlushHandle func(*MemDB) error
+
 // PrewriteAheadKVMemDBUnionStore is an in-memory Store with multi-memdb which contains a buffer for write and a
 // snapshot for read.
 type PrewriteAheadKVMemDBUnionStore struct {
@@ -34,16 +36,16 @@ type PrewriteAheadKVMemDBUnionStore struct {
 	// before the flush is completed, the data will be read from memdb.
 	// to avoid race, DO NOT WRITE the memdb in flush function.
 	// once flush returns error, the transaction failed.
-	flush func(*MemDB) error
+	flusher FlushHandle
 }
 
 // NewPrewriteAheadKVMemDBUnionStore builds a new unionStore with multi memdb.
-func NewPrewriteAheadKVMemDBUnionStore(snapshot uSnapshot, worker int, flushHandle func(*MemDB) error) *PrewriteAheadKVMemDBUnionStore {
+func NewPrewriteAheadKVMemDBUnionStore(snapshot uSnapshot, flushHandle FlushHandle) *PrewriteAheadKVMemDBUnionStore {
 	unistore := &PrewriteAheadKVMemDBUnionStore{
 		snapshot:            snapshot,
 		memBuffer:           newMemDB(),
-		onFlushingMemBuffer: newMemDB(),
-		flush:               flushHandle,
+		onFlushingMemBuffer: nil,
+		flusher:             flushHandle,
 	}
 	return unistore
 }
@@ -60,7 +62,7 @@ func (us *PrewriteAheadKVMemDBUnionStore) Get(ctx context.Context, k []byte) ([]
 	us.RUnlock()
 
 	v, err := memBuffer.Get(k)
-	if tikverr.IsErrNotFound(err) {
+	if onFlushingMemBuffer != nil && tikverr.IsErrNotFound(err) {
 		v, err = onFlushingMemBuffer.Get(k)
 	}
 	if tikverr.IsErrNotFound(err) {
@@ -120,6 +122,24 @@ func (us *PrewriteAheadKVMemDBUnionStore) IterReverse(k, lowerBound []byte) (Ite
 	return NewMultiMemDBUnionIter([3]Iterator{retrieverIt, onFlushingMemdbIt, memdbIt}, true)
 }
 
+func (us *PrewriteAheadKVMemDBUnionStore) flush() {
+	us.Lock()
+	memBuffer := us.memBuffer
+	us.onFlushingMemBuffer = memBuffer
+	us.memBuffer = newMemDB()
+	us.Unlock()
+	go func() {
+		err := us.flusher(memBuffer)
+		if err != nil {
+			// handle error
+		} else {
+			us.Lock()
+			us.onFlushingMemBuffer = nil
+			us.Unlock()
+		}
+	}()
+}
+
 // MultiMemDBUnionIter is the iterator on an UnionStore.
 type MultiMemDBUnionIter struct {
 	// the index 0 is snapshot iterator, the higher index always overwrite the lower.
@@ -130,7 +150,11 @@ type MultiMemDBUnionIter struct {
 	reverse bool
 }
 
-func NewMultiMemDBUnionIter(its [3]Iterator, reverse bool) (*MultiMemDBUnionIter, error) {
+func NewMultiMemDBUnionIter(its [3]Iterator, reverse bool) (Iterator, error) {
+	// the onflushing memdb may be nil, fallback to the simple iterator.
+	if its[1] == nil {
+		return NewUnionIter(its[2], its[0], reverse)
+	}
 	var valids [3]bool
 	for i := range valids {
 		valids[i] = its[i].Valid()
@@ -183,6 +207,7 @@ func (iter *MultiMemDBUnionIter) updateCur() error {
 	iter.isValid = true
 	for {
 		if !iter.valids[0] && !iter.valids[1] && !iter.valids[2] {
+			iter.isValid = false
 			break
 		}
 
@@ -283,4 +308,7 @@ func (iter *MultiMemDBUnionIter) Next() error {
 }
 
 func (iter *MultiMemDBUnionIter) Close() {
+	for i := range iter.its {
+		iter.its[i].Close()
+	}
 }

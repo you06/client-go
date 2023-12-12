@@ -92,7 +92,7 @@ func TestPrewriteAheadUnionStoreIter(t *testing.T) {
 		us.flush()
 		require.Nil(t, us.GetMemBuffer().Set([]byte{byte(k)}, []byte{byte(k)}))
 
-		expects := []byte{1, 2, 3}
+		expects := []byte{0, 1, 2}
 		//reverseExpects := []byte{3, 2, 1}
 
 		fmt.Println(i, j, k)
@@ -101,6 +101,7 @@ func TestPrewriteAheadUnionStoreIter(t *testing.T) {
 		_, ok := iter.(*MultiMemDBUnionIter)
 		require.True(t, ok)
 		for _, expect := range expects {
+			fmt.Println(expect)
 			require.True(t, iter.Valid())
 			require.Equal(t, iter.Key(), []byte{expect})
 			require.Equal(t, iter.Value(), []byte{expect})

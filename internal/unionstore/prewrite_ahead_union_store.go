@@ -226,7 +226,7 @@ func (iter *MultiMemDBUnionIter) updateCur() error {
 		case [2]int{-1, -1}, [2]int{-1, 0}:
 			// first iter is the smallest.
 			iter.cur = 0
-			break
+			return nil
 		case [2]int{-1, 1}:
 			cmp2 := bytes.Compare(iter.its[0].Key(), iter.its[2].Key())
 			if iter.reverse {
@@ -237,7 +237,7 @@ func (iter *MultiMemDBUnionIter) updateCur() error {
 				return err
 			}
 			if stop {
-				break
+				return nil
 			}
 		case [2]int{0, -1}:
 			stop, err := iter.updateCur2(0, 0, 1)
@@ -245,22 +245,22 @@ func (iter *MultiMemDBUnionIter) updateCur() error {
 				return err
 			}
 			if stop {
-				break
+				return nil
 			}
 		case [2]int{0, 1}, [2]int{1, 1}:
 			iter.cur = 2
-			break
+			return nil
 		case [2]int{1, 0}:
 			stop, err := iter.updateCur2(0, 1, 2)
 			if err != nil {
 				return err
 			}
 			if stop {
-				break
+				return nil
 			}
 		case [2]int{1, -1}:
 			iter.cur = 1
-			break
+			return nil
 		case [2]int{0, 0}:
 			// need to skip delete record.
 			if len(iter.its[2].Value()) == 0 {
@@ -282,7 +282,7 @@ func (iter *MultiMemDBUnionIter) updateCur() error {
 				return err
 			}
 			iter.cur = 2
-			break
+			return nil
 		}
 	}
 	return nil

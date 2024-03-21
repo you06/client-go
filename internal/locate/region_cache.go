@@ -2878,6 +2878,7 @@ func (s *Store) requestLiveness(bo *retry.Backoffer, c *RegionCache) (l liveness
 		l = unknown
 		return
 	}
+	timeoutTick := time.After(storeLivenessTimeout)
 	addr := s.addr
 	rsCh := livenessSf.DoChan(addr, func() (interface{}, error) {
 		return invokeKVStatusAPI(addr, storeLivenessTimeout), nil
@@ -2893,6 +2894,9 @@ func (s *Store) requestLiveness(bo *retry.Backoffer, c *RegionCache) (l liveness
 		l = rs.Val.(livenessState)
 	case <-ctx.Done():
 		l = unknown
+		return
+	case <-timeoutTick:
+		l = unreachable
 		return
 	}
 	return
@@ -2949,21 +2953,8 @@ func invokeKVStatusAPI(addr string, timeout time.Duration) (l livenessState) {
 	}()
 
 	req := &healthpb.HealthCheckRequest{}
-	var resp *healthpb.HealthCheckResponse
-	errCh := make(chan error, 1)
-	go func() {
-		var err1 error
-		resp, err1 = cli.Check(ctx, req)
-		errCh <- err1
-		close(errCh)
-	}()
-	select {
-	case <-ctx.Done():
-		logutil.BgLogger().Info("[health check] check health timeout", zap.String("store", addr))
-		l = unreachable
-		return
-	case err = <-errCh:
-	}
+
+	resp, err := cli.Check(ctx, req)
 	if err != nil {
 		logutil.BgLogger().Info("[health check] check health error", zap.String("store", addr), zap.Error(err))
 		l = unreachable

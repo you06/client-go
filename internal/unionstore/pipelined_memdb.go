@@ -61,11 +61,11 @@ const (
 	// MinFlushKeys is the minimum number of keys to trigger flush.
 	// small batch can lead to poor performance and resource waste in random write workload.
 	// 10K batch size is large enough to get good performance with random write workloads in tests.
-	MinFlushKeys = 10000
+	MinFlushKeys = 100
 	// MinFlushMemSize is the minimum size of MemDB to trigger flush.
-	MinFlushMemSize uint64 = 16 * 1024 * 1024 // 16MB
+	MinFlushMemSize uint64 = 1 * 1024 * 1024 // 16MB
 	// ForceFlushMemSizeThreshold is the threshold to force flush MemDB, which controls the max memory consumption of PipelinedMemDB.
-	ForceFlushMemSizeThreshold uint64 = 128 * 1024 * 1024 // 128MB
+	ForceFlushMemSizeThreshold uint64 = 16 * 1024 * 1024 // 128MB
 )
 
 type flushOption struct {

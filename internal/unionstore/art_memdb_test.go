@@ -66,4 +66,7 @@ func TestArtIterator(t *testing.T) {
 		require.Equal(t, expectKeyValues[i][0], keys[i])
 		require.Equal(t, expectKeyValues[i][1], values[i])
 	}
+	lower, upper := p.Bounds()
+	require.Equal(t, lower, keys[0])
+	require.Equal(t, upper, keys[len(keys)-1])
 }

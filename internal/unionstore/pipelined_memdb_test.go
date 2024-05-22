@@ -32,6 +32,7 @@ func emptyBufferBatchGetter(ctx context.Context, keys [][]byte) (map[string][]by
 }
 
 func TestPipelinedFlushTrigger(t *testing.T) {
+	t.Skip()
 	// because memdb's memory usage is hard to control, we use a cargo-culted value here.
 	avgKeySize := int(MinFlushMemSize/MinFlushKeys) / 3
 

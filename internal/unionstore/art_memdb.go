@@ -13,6 +13,7 @@ type ArtMemDB struct {
 	tree            art.Tree
 	entrySizeLimit  uint64
 	bufferSizeLimit uint64
+	upper, lower    []byte
 }
 
 type FlagValue struct {
@@ -30,7 +31,34 @@ func newArtMemDB() *ArtMemDB {
 	}
 }
 
+func (a *ArtMemDB) updateBound(key []byte) {
+	if a.upper == nil || kv.CmpKey(key, a.upper) > 0 {
+		if len(a.upper) == len(key) {
+			copy(a.upper, key)
+		} else if len(a.upper) < len(key) {
+			a.upper = append(a.upper[:0], key...)
+		} else {
+			a.upper = append(a.upper[:0], key...)
+		}
+	}
+	if a.lower == nil || kv.CmpKey(key, a.lower) < 0 {
+		if len(a.lower) == len(key) {
+			copy(a.lower, key)
+		} else if len(a.lower) < len(key) {
+			a.lower = append(a.lower[:0], key...)
+		} else {
+			a.lower = append(a.lower[:0], key...)
+		}
+
+	}
+}
+
+func (a *ArtMemDB) Bounds() ([]byte, []byte) {
+	return a.lower, a.upper
+}
+
 func (a *ArtMemDB) Set(key []byte, value []byte) error {
+	a.updateBound(key)
 	cpValues := make([]byte, len(value))
 	copy(cpValues, value)
 	flagVal := &FlagValue{
@@ -47,6 +75,7 @@ func (a *ArtMemDB) Set(key []byte, value []byte) error {
 }
 
 func (a *ArtMemDB) SetWithFlags(key []byte, value []byte, ops ...kv.FlagsOp) error {
+	a.updateBound(key)
 	flagVal := &FlagValue{
 		value: value,
 		flags: kv.ApplyFlagsOps(0, ops...),
@@ -62,6 +91,7 @@ func (a *ArtMemDB) SetWithFlags(key []byte, value []byte, ops ...kv.FlagsOp) err
 }
 
 func (a *ArtMemDB) Delete(key []byte) error {
+	a.updateBound(key)
 	flagVal, found := a.tree.Search(key)
 	if found {
 		flagVal.(*FlagValue).value = tombstone
@@ -81,6 +111,7 @@ func (a *ArtMemDB) Delete(key []byte) error {
 }
 
 func (a *ArtMemDB) DeleteWithFlags(key []byte, ops ...kv.FlagsOp) error {
+	a.updateBound(key)
 	val, found := a.tree.Search(key)
 	if found {
 		flagVal := val.(*FlagValue)
@@ -103,6 +134,7 @@ func (a *ArtMemDB) DeleteWithFlags(key []byte, ops ...kv.FlagsOp) error {
 }
 
 func (a *ArtMemDB) UpdateFlags(key []byte, ops ...kv.FlagsOp) {
+	a.updateBound(key)
 	val, found := a.tree.Search(key)
 	if !found {
 		return
@@ -112,6 +144,7 @@ func (a *ArtMemDB) UpdateFlags(key []byte, ops ...kv.FlagsOp) {
 }
 
 func (a *ArtMemDB) Get(key []byte) ([]byte, error) {
+	a.updateBound(key)
 	flagVal, found := a.tree.Search(key)
 	if !found {
 		return nil, tikverr.ErrNotExist
@@ -120,6 +153,7 @@ func (a *ArtMemDB) Get(key []byte) ([]byte, error) {
 }
 
 func (a *ArtMemDB) GetFlags(key []byte) (kv.KeyFlags, error) {
+	a.updateBound(key)
 	flagVal, found := a.tree.Search(key)
 	if !found {
 		return 0, tikverr.ErrNotExist
@@ -213,9 +247,7 @@ func (a *ArtMemDBIterator) Key() []byte {
 }
 
 func (a *ArtMemDBIterator) Value() []byte {
-	flagValue := a.cur.Value().(*FlagValue)
-	return flagValue.value
-	//return a.cur.Value().(*FlagValue).value
+	return a.cur.Value().(*FlagValue).value
 }
 
 func (a *ArtMemDBIterator) Close() {}

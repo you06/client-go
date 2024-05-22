@@ -466,7 +466,7 @@ func (txn *KVTxn) InitPipelinedMemDB() error {
 	flushedKeys, flushedSize := 0, 0
 	pipelinedMemDB := unionstore.NewPipelinedMemDB(func(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
 		return txn.snapshot.BatchGetWithTier(ctx, keys, txnsnapshot.BatchGetBufferTier)
-	}, func(generation uint64, memdb *unionstore.MemDB) (err error) {
+	}, func(generation uint64, memdb *unionstore.ArtMemDB) (err error) {
 		if atomic.LoadUint32((*uint32)(&txn.committer.ttlManager.state)) == uint32(stateClosed) {
 			return errors.New("ttl manager is closed")
 		}
@@ -493,41 +493,25 @@ func (txn *KVTxn) InitPipelinedMemDB() error {
 		// The flush function will not be called concurrently.
 		// TODO: set backoffer from upper context.
 		bo := retry.NewBackofferWithVars(flushCtx, 20000, nil)
-		mutations := newMemBufferMutations(memdb.Len(), memdb)
+		//mutations := newMemBufferMutations(memdb.Len(), memdb)
+		mutations := NewPlainMutations(memdb.Len())
 		if memdb.Len() == 0 {
 			return nil
 		}
 		// update bounds
 		{
-			var it unionstore.Iterator
-			// lower bound
-			it = memdb.IterWithFlags(nil, nil)
-			if !it.Valid() {
-				return errors.New("invalid iterator")
-			}
-			startKey := it.Key()
-			if len(txn.committer.pipelinedCommitInfo.pipelinedStart) == 0 || bytes.Compare(txn.committer.pipelinedCommitInfo.pipelinedStart, startKey) > 0 {
+			startKey, endKey := memdb.Bounds()
+			if startKey != nil && len(txn.committer.pipelinedCommitInfo.pipelinedStart) == 0 || bytes.Compare(txn.committer.pipelinedCommitInfo.pipelinedStart, startKey) > 0 {
 				txn.committer.pipelinedCommitInfo.pipelinedStart = make([]byte, len(startKey))
 				copy(txn.committer.pipelinedCommitInfo.pipelinedStart, startKey)
 			}
-			it.Close()
-			// upper bound
-			it = memdb.IterReverseWithFlags(nil)
-			if !it.Valid() {
-				return errors.New("invalid iterator")
-			}
-			endKey := it.Key()
-			if len(txn.committer.pipelinedCommitInfo.pipelinedEnd) == 0 || bytes.Compare(txn.committer.pipelinedCommitInfo.pipelinedEnd, endKey) < 0 {
+			if endKey != nil && len(txn.committer.pipelinedCommitInfo.pipelinedEnd) == 0 || bytes.Compare(txn.committer.pipelinedCommitInfo.pipelinedEnd, endKey) < 0 {
 				txn.committer.pipelinedCommitInfo.pipelinedEnd = make([]byte, len(endKey))
 				copy(txn.committer.pipelinedCommitInfo.pipelinedEnd, endKey)
 			}
-			it.Close()
 		}
 		// TODO: reuse initKeysAndMutations
-		for it := memdb.IterWithFlags(nil, nil); it.Valid(); err = it.Next() {
-			if err != nil {
-				return err
-			}
+		for it := memdb.IterWithFlags(nil, nil); it.Valid(); it.Next() {
 			flags := it.Flags()
 			var value []byte
 			var op kvrpcpb.Op
@@ -579,9 +563,9 @@ func (txn *KVTxn) InitPipelinedMemDB() error {
 			if txn.assertionLevel == kvrpcpb.AssertionLevel_Off {
 				mustExist, mustNotExist = false, false
 			}
-			mutations.Push(op, false, mustExist, mustNotExist, flags.HasNeedConstraintCheckInPrewrite(), it.Handle())
+			mutations.Push(op, it.Key(), value, false, mustExist, mustNotExist, flags.HasNeedConstraintCheckInPrewrite())
 		}
-		return txn.committer.pipelinedFlushMutations(bo, mutations, generation)
+		return txn.committer.pipelinedFlushMutations(bo, &mutations, generation)
 	})
 	txn.committer.priority = txn.priority.ToPB()
 	txn.committer.syncLog = txn.syncLog

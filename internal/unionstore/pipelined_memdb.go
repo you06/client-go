@@ -42,9 +42,9 @@ type PipelinedMemDB struct {
 	errCh                   chan error
 	flushFunc               FlushFunc
 	bufferBatchGetter       BufferBatchGetter
-	memDB                   *MemDB
-	flushingMemDB           *MemDB // the flushingMemDB is not wrapped by a mutex, because there is no data race in it.
-	len, size               int    // len and size records the total flushed and onflushing memdb.
+	memDB                   *ArtMemDB
+	flushingMemDB           *ArtMemDB // the flushingMemDB is not wrapped by a mutex, because there is no data race in it.
+	len, size               int       // len and size records the total flushed and onflushing memdb.
 	generation              uint64
 	entryLimit, bufferLimit uint64
 	flushOption             flushOption
@@ -95,12 +95,12 @@ func newFlushOption() flushOption {
 	return opt
 }
 
-type FlushFunc func(uint64, *MemDB) error
+type FlushFunc func(uint64, *ArtMemDB) error
 type BufferBatchGetter func(ctx context.Context, keys [][]byte) (map[string][]byte, error)
 
 func NewPipelinedMemDB(bufferBatchGetter BufferBatchGetter, flushFunc FlushFunc) *PipelinedMemDB {
-	memdb := newMemDB()
-	memdb.setSkipMutex(true)
+	memdb := newArtMemDB()
+	//memdb.setSkipMutex(true)
 	flushOpt := newFlushOption()
 	return &PipelinedMemDB{
 		memDB:             memdb,
@@ -305,9 +305,9 @@ func (p *PipelinedMemDB) Flush(force bool) (bool, error) {
 	p.flushingMemDB = p.memDB
 	p.len += p.flushingMemDB.Len()
 	p.size += p.flushingMemDB.Size()
-	p.memDB = newMemDB()
-	p.memDB.SetEntrySizeLimit(p.entryLimit, p.bufferLimit)
-	p.memDB.setSkipMutex(true)
+	p.memDB = newArtMemDB()
+	//p.memDB.SetEntrySizeLimit(p.entryLimit, p.bufferLimit)
+	//p.memDB.setSkipMutex(true)
 	p.generation++
 	go func(generation uint64) {
 		util.EvalFailpoint("beforePipelinedFlush")
@@ -406,7 +406,7 @@ func (p *PipelinedMemDB) IterReverse([]byte, []byte) (Iterator, error) {
 // SetEntrySizeLimit sets the size limit for each entry and total buffer.
 func (p *PipelinedMemDB) SetEntrySizeLimit(entryLimit, bufferLimit uint64) {
 	p.entryLimit, p.bufferLimit = entryLimit, bufferLimit
-	p.memDB.SetEntrySizeLimit(entryLimit, bufferLimit)
+	//p.memDB.SetEntrySizeLimit(entryLimit, bufferLimit)
 }
 
 func (p *PipelinedMemDB) Len() int {

@@ -466,7 +466,7 @@ func (txn *KVTxn) InitPipelinedMemDB() error {
 	flushedKeys, flushedSize := 0, 0
 	pipelinedMemDB := unionstore.NewPipelinedMemDB(func(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
 		return txn.snapshot.BatchGetWithTier(ctx, keys, txnsnapshot.BatchGetBufferTier)
-	}, func(generation uint64, memdb *unionstore.MemDB) (err error) {
+	}, func(generation uint64, memdb *unionstore.ArtMemDB) (err error) {
 		if atomic.LoadUint32((*uint32)(&txn.committer.ttlManager.state)) == uint32(stateClosed) {
 			return errors.New("ttl manager is closed")
 		}
@@ -493,7 +493,8 @@ func (txn *KVTxn) InitPipelinedMemDB() error {
 		// The flush function will not be called concurrently.
 		// TODO: set backoffer from upper context.
 		bo := retry.NewBackofferWithVars(flushCtx, 20000, nil)
-		mutations := newMemBufferMutations(memdb.Len(), memdb)
+		//mutations := newMemBufferMutations(memdb.Len(), memdb)
+		mutations := NewPlainMutations(memdb.Len())
 		if memdb.Len() == 0 {
 			return nil
 		}

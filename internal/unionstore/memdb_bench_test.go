@@ -72,6 +72,34 @@ func BenchmarkPut(b *testing.B) {
 	}
 }
 
+func BenchmarkPutArt(b *testing.B) {
+	buf := make([][valueSize]byte, b.N)
+	for i := range buf {
+		binary.BigEndian.PutUint32(buf[i][:], uint32(i))
+	}
+
+	p := newArtMemDB()
+	b.ResetTimer()
+
+	for i := range buf {
+		p.Set(buf[i][:keySize], buf[i][:])
+	}
+}
+
+func BenchmarkPutHashMap(b *testing.B) {
+	buf := make([][valueSize]byte, b.N)
+	for i := range buf {
+		binary.BigEndian.PutUint32(buf[i][:], uint32(i))
+	}
+
+	p := make(map[string][]byte, 256)
+	b.ResetTimer()
+
+	for i := range buf {
+		p[string(buf[i][:keySize])] = buf[i][:]
+	}
+}
+
 func BenchmarkPutRandom(b *testing.B) {
 	buf := make([][valueSize]byte, b.N)
 	for i := range buf {
@@ -83,6 +111,34 @@ func BenchmarkPutRandom(b *testing.B) {
 
 	for i := range buf {
 		p.Set(buf[i][:keySize], buf[i][:])
+	}
+}
+
+func BenchmarkPutRandomArt(b *testing.B) {
+	buf := make([][valueSize]byte, b.N)
+	for i := range buf {
+		binary.LittleEndian.PutUint32(buf[i][:], uint32(rand.Int()))
+	}
+
+	p := newArtMemDB()
+	b.ResetTimer()
+
+	for i := range buf {
+		p.Set(buf[i][:keySize], buf[i][:])
+	}
+}
+
+func BenchmarkPutRandomHashMap(b *testing.B) {
+	buf := make([][valueSize]byte, b.N)
+	for i := range buf {
+		binary.LittleEndian.PutUint32(buf[i][:], uint32(rand.Int()))
+	}
+
+	p := make(map[string][]byte, 256)
+	b.ResetTimer()
+
+	for i := range buf {
+		p[string(buf[i][:keySize])] = buf[i][:]
 	}
 }
 

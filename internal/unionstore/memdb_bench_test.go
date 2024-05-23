@@ -188,6 +188,16 @@ func BenchmarkMemDbBufferSequential(b *testing.B) {
 	b.ReportAllocs()
 }
 
+func BenchmarkMemDbBufferSequentialArt(b *testing.B) {
+	data := make([][]byte, opCnt)
+	for i := 0; i < opCnt; i++ {
+		data[i] = encodeInt(i)
+	}
+	buffer := newArtMemDB()
+	benchmarkSetGet(b, buffer, data)
+	b.ReportAllocs()
+}
+
 func BenchmarkMemDbBufferRandom(b *testing.B) {
 	data := make([][]byte, opCnt)
 	for i := 0; i < opCnt; i++ {
@@ -199,8 +209,25 @@ func BenchmarkMemDbBufferRandom(b *testing.B) {
 	b.ReportAllocs()
 }
 
+func BenchmarkMemDbBufferRandomArt(b *testing.B) {
+	data := make([][]byte, opCnt)
+	for i := 0; i < opCnt; i++ {
+		data[i] = encodeInt(i)
+	}
+	shuffle(data)
+	buffer := newArtMemDB()
+	benchmarkSetGet(b, buffer, data)
+	b.ReportAllocs()
+}
+
 func BenchmarkMemDbIter(b *testing.B) {
 	buffer := newMemDB()
+	benchIterator(b, buffer)
+	b.ReportAllocs()
+}
+
+func BenchmarkMemDbIterArt(b *testing.B) {
+	buffer := newArtMemDB()
 	benchIterator(b, buffer)
 	b.ReportAllocs()
 }
@@ -220,7 +247,14 @@ func shuffle(slc [][]byte) {
 		slc[r], slc[i] = slc[i], slc[r]
 	}
 }
-func benchmarkSetGet(b *testing.B, buffer *MemDB, data [][]byte) {
+
+type iMemDB interface {
+	Set(key, value []byte) error
+	Get(key []byte) ([]byte, error)
+	Iter([]byte, []byte) (Iterator, error)
+}
+
+func benchmarkSetGet(b *testing.B, buffer iMemDB, data [][]byte) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, k := range data {
@@ -232,7 +266,7 @@ func benchmarkSetGet(b *testing.B, buffer *MemDB, data [][]byte) {
 	}
 }
 
-func benchIterator(b *testing.B, buffer *MemDB) {
+func benchIterator(b *testing.B, buffer iMemDB) {
 	for k := 0; k < opCnt; k++ {
 		buffer.Set(encodeInt(k), encodeInt(k))
 	}

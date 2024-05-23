@@ -159,6 +159,8 @@ func (a *ArtMemDB) Release(int) {}
 
 func (a *ArtMemDB) Cleanup(int) {}
 
+var _ Iterator = &ArtMemDBIterator{}
+
 type ArtMemDBIterator struct {
 	from, to []byte
 	inner    art.Iterator
@@ -166,7 +168,7 @@ type ArtMemDBIterator struct {
 	valid    bool
 }
 
-func (a *ArtMemDB) Iter(k []byte, upperBound []byte) (*ArtMemDBIterator, error) {
+func (a *ArtMemDB) Iter(k []byte, upperBound []byte) (Iterator, error) {
 	return a.IterWithFlags(k, upperBound), nil
 }
 
@@ -181,25 +183,25 @@ func (a *ArtMemDBIterator) Valid() bool {
 	return a.valid
 }
 
-func (a *ArtMemDBIterator) Next() {
+func (a *ArtMemDBIterator) Next() error {
 	var err error
 	for {
 		a.cur, err = a.inner.Next()
 		if err != nil {
 			a.valid = false
-			return
+			return nil
 		}
 		currKey := []byte(a.cur.Key())
 		if currKey == nil {
 			continue
 		}
 		if a.to != nil && kv.CmpKey(currKey, a.to) > 0 {
-			return
+			return nil
 		}
 		if a.from != nil && kv.CmpKey(currKey, a.from) < 0 {
 			continue
 		}
-		return
+		return nil
 	}
 }
 

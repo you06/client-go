@@ -38,6 +38,9 @@ import (
 	"encoding/binary"
 	"math/rand"
 	"testing"
+
+	"github.com/pkg/errors"
+	tikverr "github.com/tikv/client-go/v2/error"
 )
 
 const (
@@ -198,6 +201,41 @@ func BenchmarkMemDbBufferSequentialArt(b *testing.B) {
 	b.ReportAllocs()
 }
 
+type haspMapMemDB struct {
+	inner map[string][]byte
+}
+
+func newHaspMapMemDB() *haspMapMemDB {
+	return &haspMapMemDB{inner: make(map[string][]byte, 256)}
+}
+
+func (m *haspMapMemDB) Set(key, value []byte) error {
+	m.inner[string(key)] = value
+	return nil
+}
+
+func (m *haspMapMemDB) Get(key []byte) ([]byte, error) {
+	val, ok := m.inner[string(key)]
+	if !ok {
+		return nil, tikverr.ErrNotExist
+	}
+	return val, nil
+}
+
+func (m *haspMapMemDB) Iter(_ []byte, _ []byte) (Iterator, error) {
+	return nil, errors.New("not implemented")
+}
+
+func BenchmarkMemDbBufferSequentialHashMap(b *testing.B) {
+	data := make([][]byte, opCnt)
+	for i := 0; i < opCnt; i++ {
+		data[i] = encodeInt(i)
+	}
+	buffer := newHaspMapMemDB()
+	benchmarkSetGet(b, buffer, data)
+	b.ReportAllocs()
+}
+
 func BenchmarkMemDbBufferRandom(b *testing.B) {
 	data := make([][]byte, opCnt)
 	for i := 0; i < opCnt; i++ {
@@ -216,6 +254,17 @@ func BenchmarkMemDbBufferRandomArt(b *testing.B) {
 	}
 	shuffle(data)
 	buffer := newArtMemDB()
+	benchmarkSetGet(b, buffer, data)
+	b.ReportAllocs()
+}
+
+func BenchmarkMemDbBufferRandomHashMap(b *testing.B) {
+	data := make([][]byte, opCnt)
+	for i := 0; i < opCnt; i++ {
+		data[i] = encodeInt(i)
+	}
+	shuffle(data)
+	buffer := newHaspMapMemDB()
 	benchmarkSetGet(b, buffer, data)
 	b.ReportAllocs()
 }
@@ -240,6 +289,16 @@ func BenchmarkMemDbBufferLongKeySequentialArt(b *testing.B) {
 	b.ReportAllocs()
 }
 
+func BenchmarkMemDbBufferLongKeySequentialHashMap(b *testing.B) {
+	data := make([][]byte, opCnt)
+	for i := 0; i < opCnt; i++ {
+		data[i] = encodeIntLong(i)
+	}
+	buffer := newHaspMapMemDB()
+	benchmarkSetGet(b, buffer, data)
+	b.ReportAllocs()
+}
+
 func BenchmarkMemDbBufferLongKeyRandom(b *testing.B) {
 	data := make([][]byte, opCnt)
 	for i := 0; i < opCnt; i++ {
@@ -258,6 +317,17 @@ func BenchmarkMemDbBufferLongKeyRandomArt(b *testing.B) {
 	}
 	shuffle(data)
 	buffer := newArtMemDB()
+	benchmarkSetGet(b, buffer, data)
+	b.ReportAllocs()
+}
+
+func BenchmarkMemDbBufferLongKeyRandomHashMap(b *testing.B) {
+	data := make([][]byte, opCnt)
+	for i := 0; i < opCnt; i++ {
+		data[i] = encodeIntLong(i)
+	}
+	shuffle(data)
+	buffer := newHaspMapMemDB()
 	benchmarkSetGet(b, buffer, data)
 	b.ReportAllocs()
 }

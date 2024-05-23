@@ -76,8 +76,10 @@ func (a *ArtMemDB) Set(key []byte, value []byte) error {
 
 func (a *ArtMemDB) SetWithFlags(key []byte, value []byte, ops ...kv.FlagsOp) error {
 	a.updateBound(key)
+	cpValues := make([]byte, len(value))
+	copy(cpValues, value)
 	flagVal := &FlagValue{
-		value: value,
+		value: cpValues,
 		flags: kv.ApplyFlagsOps(0, ops...),
 	}
 	old, updated := a.tree.Insert(key, flagVal)

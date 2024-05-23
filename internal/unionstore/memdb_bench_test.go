@@ -220,6 +220,48 @@ func BenchmarkMemDbBufferRandomArt(b *testing.B) {
 	b.ReportAllocs()
 }
 
+func BenchmarkMemDbBufferLongKeySequential(b *testing.B) {
+	data := make([][]byte, opCnt)
+	for i := 0; i < opCnt; i++ {
+		data[i] = encodeIntLong(i)
+	}
+	buffer := newMemDB()
+	benchmarkSetGet(b, buffer, data)
+	b.ReportAllocs()
+}
+
+func BenchmarkMemDbBufferLongKeySequentialArt(b *testing.B) {
+	data := make([][]byte, opCnt)
+	for i := 0; i < opCnt; i++ {
+		data[i] = encodeIntLong(i)
+	}
+	buffer := newArtMemDB()
+	benchmarkSetGet(b, buffer, data)
+	b.ReportAllocs()
+}
+
+func BenchmarkMemDbBufferLongKeyRandom(b *testing.B) {
+	data := make([][]byte, opCnt)
+	for i := 0; i < opCnt; i++ {
+		data[i] = encodeIntLong(i)
+	}
+	shuffle(data)
+	buffer := newMemDB()
+	benchmarkSetGet(b, buffer, data)
+	b.ReportAllocs()
+}
+
+func BenchmarkMemDbBufferLongKeyRandomArt(b *testing.B) {
+	data := make([][]byte, opCnt)
+	for i := 0; i < opCnt; i++ {
+		data[i] = encodeIntLong(i)
+	}
+	shuffle(data)
+	buffer := newArtMemDB()
+	benchmarkSetGet(b, buffer, data)
+	b.ReportAllocs()
+}
+
 func BenchmarkMemDbIter(b *testing.B) {
 	buffer := newMemDB()
 	benchIterator(b, buffer)

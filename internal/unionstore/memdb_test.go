@@ -643,6 +643,14 @@ func encodeInt(n int) []byte {
 	return []byte(fmt.Sprintf("%010d", n))
 }
 
+func encodeIntLong(n int) []byte {
+	const KEY_SIZE = 1000
+	b := make([]byte, KEY_SIZE)
+	binary.LittleEndian.PutUint32(b[:], uint32(n))
+	b[KEY_SIZE-1] = byte(n % 256)
+	return b
+}
+
 func decodeInt(s []byte) int {
 	var n int
 	fmt.Sscanf(string(s), "%010d", &n)

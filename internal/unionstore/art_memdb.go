@@ -10,24 +10,26 @@ import (
 type ArtMemDB struct {
 	len, size       int
 	stages          []int // donot support stages by now
-	tree            art.Tree
 	entrySizeLimit  uint64
 	bufferSizeLimit uint64
+	vlog            memdbVlog
+	tree            art.Tree
 }
 
 type FlagValue struct {
-	value []byte
+	addr  memdbArenaAddr
 	flags kv.KeyFlags
 }
 
 func newArtMemDB() *ArtMemDB {
 	artTree := art.New()
 	artTree.Size()
-	return &ArtMemDB{
+	m := &ArtMemDB{
 		tree:            artTree,
 		entrySizeLimit:  math.MaxUint64,
 		bufferSizeLimit: math.MaxUint64,
 	}
+	return m
 }
 
 func (a *ArtMemDB) Bounds() ([]byte, []byte) {
@@ -36,87 +38,109 @@ func (a *ArtMemDB) Bounds() ([]byte, []byte) {
 	return lower, upper
 }
 
-func (a *ArtMemDB) Set(key []byte, value []byte) error {
-	cpValues := make([]byte, len(value))
-	copy(cpValues, value)
-	flagVal := &FlagValue{
-		value: cpValues,
+func (a *ArtMemDB) setValue(value []byte, flags kv.KeyFlags) memdbArenaAddr {
+	size := memdbVlogHdrSize + len(value) + 2
+	addr, mem := a.vlog.alloc(size, false)
+	endian.PutUint16(mem, uint16(flags))
+	copy(mem[2:], value)
+	hdr := memdbVlogHdr{
+		valueLen: uint32(len(value)) + 2,
 	}
-	old, updated := a.tree.Insert(key, flagVal)
+	hdr.store(mem[len(value)+2:])
+	addr.off += uint32(size)
+	return addr
+}
+
+func (a *ArtMemDB) getValue(addr memdbArenaAddr) []byte {
+	lenOff := addr.off - memdbVlogHdrSize
+	block := a.vlog.blocks[addr.idx].buf
+	valueLen := endian.Uint32(block[lenOff:])
+	if valueLen == 0 {
+		return tombstone
+	}
+	valueOff := lenOff - valueLen
+	return block[valueOff:lenOff:lenOff][2:]
+}
+
+func (a *ArtMemDB) getFlag(addr memdbArenaAddr) kv.KeyFlags {
+	lenOff := addr.off - memdbVlogHdrSize
+	block := a.vlog.blocks[addr.idx].buf
+	valueLen := endian.Uint32(block[lenOff:])
+	if valueLen == 0 {
+		return 0
+	}
+	valueOff := lenOff - valueLen
+	flag := endian.Uint16(block[valueOff:lenOff:lenOff][:2])
+	return kv.KeyFlags(flag)
+}
+
+func (a *ArtMemDB) appendValue(x memdbNodeAddr) []byte {
+	if x.vptr.isNull() {
+		return nil
+	}
+	return a.vlog.getValue(x.vptr)
+}
+
+func (a *ArtMemDB) Set(key []byte, value []byte) error {
+	addr := a.setValue(value, 0)
+	old, updated := a.tree.Insert(key, addr)
 	a.len++
 	a.size += len(key) + len(value)
 	if old != nil && updated {
 		a.len--
-		a.size -= len(key) + len(old.(*FlagValue).value)
+		a.size -= len(key) + len(a.getValue(old.(memdbArenaAddr)))
 	}
 	return nil
 }
 
 func (a *ArtMemDB) SetWithFlags(key []byte, value []byte, ops ...kv.FlagsOp) error {
-	cpValues := make([]byte, len(value))
-	copy(cpValues, value)
-	flagVal := &FlagValue{
-		value: cpValues,
-		flags: kv.ApplyFlagsOps(0, ops...),
-	}
-	old, updated := a.tree.Insert(key, flagVal)
+	addr := a.setValue(value, kv.ApplyFlagsOps(0, ops...))
+	old, updated := a.tree.Insert(key, addr)
 	a.len++
 	a.size += len(key) + len(value)
 	if old != nil && updated {
 		a.len--
-		a.size -= len(key) + len(old.(*FlagValue).value)
+		a.size -= len(key) + len(a.getValue(old.(memdbArenaAddr)))
 	}
 	return nil
 }
 
 func (a *ArtMemDB) Delete(key []byte) error {
-	flagVal, found := a.tree.Search(key)
-	if found {
-		flagVal.(*FlagValue).value = tombstone
-		return nil
-	}
-	flagVal = &FlagValue{
-		value: tombstone,
-	}
-	old, updated := a.tree.Insert(key, flagVal)
+	addr := a.setValue(tombstone, 0)
+	old, updated := a.tree.Insert(key, addr)
 	a.len++
 	a.size += len(key)
 	if old != nil && updated {
 		a.len--
-		a.size -= len(key) + len(old.(*FlagValue).value)
+		a.size -= len(key) + len(a.getValue(old.(memdbArenaAddr)))
 	}
 	return nil
 }
 
 func (a *ArtMemDB) DeleteWithFlags(key []byte, ops ...kv.FlagsOp) error {
+	var flags kv.KeyFlags
 	val, found := a.tree.Search(key)
 	if found {
-		flagVal := val.(*FlagValue)
-		flagVal.value = tombstone
-		flagVal.flags = kv.ApplyFlagsOps(flagVal.flags, ops...)
-		return nil
+		flags = a.getFlag(val.(memdbArenaAddr))
 	}
-	flagVal := &FlagValue{
-		value: tombstone,
-		flags: kv.ApplyFlagsOps(0, ops...),
-	}
-	old, updated := a.tree.Insert(key, flagVal)
+	addr := a.setValue(tombstone, kv.ApplyFlagsOps(flags, ops...))
+	old, updated := a.tree.Insert(key, addr)
 	a.len++
 	a.size += len(key)
 	if old != nil && updated {
 		a.len--
-		a.size -= len(key) + len(old.(*FlagValue).value)
+		a.size -= len(key) + len(a.getValue(old.(memdbArenaAddr)))
 	}
 	return nil
 }
 
 func (a *ArtMemDB) UpdateFlags(key []byte, ops ...kv.FlagsOp) {
-	val, found := a.tree.Search(key)
+	_, found := a.tree.Search(key)
 	if !found {
 		return
 	}
-	flagVal := val.(*FlagValue)
-	flagVal.flags = kv.ApplyFlagsOps(flagVal.flags, ops...)
+	//flagVal := val.(*)
+	//flagVal.flags = kv.ApplyFlagsOps(flagVal.flags, ops...)
 }
 
 func (a *ArtMemDB) Get(key []byte) ([]byte, error) {
@@ -124,7 +148,7 @@ func (a *ArtMemDB) Get(key []byte) ([]byte, error) {
 	if !found {
 		return nil, tikverr.ErrNotExist
 	}
-	return flagVal.(*FlagValue).value, nil
+	return a.getValue(flagVal.(memdbArenaAddr)), nil
 }
 
 func (a *ArtMemDB) GetFlags(key []byte) (kv.KeyFlags, error) {
@@ -132,7 +156,7 @@ func (a *ArtMemDB) GetFlags(key []byte) (kv.KeyFlags, error) {
 	if !found {
 		return 0, tikverr.ErrNotExist
 	}
-	return flagVal.(*FlagValue).flags, nil
+	return a.getFlag(flagVal.(memdbArenaAddr)), nil
 }
 
 func (a *ArtMemDB) Dirty() bool {
@@ -162,6 +186,7 @@ func (a *ArtMemDB) Cleanup(int) {}
 var _ Iterator = &ArtMemDBIterator{}
 
 type ArtMemDBIterator struct {
+	artTree  *ArtMemDB
 	from, to []byte
 	inner    art.Iterator
 	cur      art.Node
@@ -174,7 +199,7 @@ func (a *ArtMemDB) Iter(k []byte, upperBound []byte) (Iterator, error) {
 
 func (a *ArtMemDB) IterWithFlags(k []byte, upperBound []byte) *ArtMemDBIterator {
 	inner := a.tree.Iterator(art.TraverseAll)
-	iterator := &ArtMemDBIterator{from: k, to: upperBound, inner: inner, cur: nil, valid: true}
+	iterator := &ArtMemDBIterator{artTree: a, from: k, to: upperBound, inner: inner, cur: nil, valid: true}
 	iterator.Next()
 	return iterator
 }
@@ -215,7 +240,7 @@ func (a *ArtMemDBIterator) HasValue() bool {
 	if val == nil {
 		return false
 	}
-	return val.(*FlagValue).value != nil
+	return val.(memdbArenaAddr) != memdbArenaAddr{}
 }
 
 func (a *ArtMemDBIterator) Key() []byte {
@@ -223,7 +248,7 @@ func (a *ArtMemDBIterator) Key() []byte {
 }
 
 func (a *ArtMemDBIterator) Value() []byte {
-	return a.cur.Value().(*FlagValue).value
+	return a.artTree.getValue(a.cur.Value().(memdbArenaAddr))
 }
 
 func (a *ArtMemDBIterator) Close() {}

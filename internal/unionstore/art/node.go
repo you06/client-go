@@ -25,6 +25,15 @@ const (
 	node256size = 2068
 )
 
+// null node256 is used to initialize the node 256
+var nullNode256 = node256{}
+
+func init() {
+	for i := 0; i < node256cap; i++ {
+		nullNode256.children[i] = nullAddr
+	}
+}
+
 type artNode struct {
 	kind nodeKind
 	addr nodeAddr

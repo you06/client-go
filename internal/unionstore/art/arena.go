@@ -77,12 +77,17 @@ type vlogArena struct {
 	memArena
 }
 
+type leafArena struct {
+	memArena
+}
+
 type artAllocator struct {
 	vlogAllocator    vlogArena
 	node4Allocator   fixedSizeArena
 	node16Allocator  fixedSizeArena
 	node48Allocator  fixedSizeArena
 	node256Allocator fixedSizeArena
+	leafAllocator    leafArena
 	// the total size of all blocks, also the approximate memory footprint of the arena.
 	capacity uint64
 }
@@ -97,13 +102,12 @@ func (allocator *artAllocator) init() {
 func (f *artAllocator) allocNode4() (nodeAddr, *node4) {
 	addr, data := f.node4Allocator.alloc()
 	n4 := (*node4)(unsafe.Pointer(&data[0]))
-	// initialize basic node
-	n4.nodeNum = 0
-	n4.prefixLen = 0
-	n4.inplaceLeaf = nullAddr
-	// initialize node4
-	n4.present = 0
+	n4.init()
 	return addr, n4
+}
+
+func (f *artAllocator) freeNode4(addr nodeAddr) {
+	f.node4Allocator.free(addr)
 }
 
 func (f *artAllocator) getNode4(addr nodeAddr) *node4 {
@@ -111,7 +115,7 @@ func (f *artAllocator) getNode4(addr nodeAddr) *node4 {
 		return nil
 	}
 	data := f.node4Allocator.getData(addr)
-	return (*node4)(unsafe.Pointer(&data))
+	return (*node4)(unsafe.Pointer(&data[0]))
 }
 
 func (f *artAllocator) allocNode16() (nodeAddr, *node16) {
@@ -120,13 +124,12 @@ func (f *artAllocator) allocNode16() (nodeAddr, *node16) {
 		panic("alloc node16 failed")
 	}
 	n16 := (*node16)(unsafe.Pointer(&data[0]))
-	// initialize basic node
-	n16.nodeNum = 0
-	n16.prefixLen = 0
-	n16.inplaceLeaf = nullAddr
-	// initialize node16
-	n16.present = 0
+	n16.init()
 	return addr, n16
+}
+
+func (f *artAllocator) freeNode16(addr nodeAddr) {
+	f.node16Allocator.free(addr)
 }
 
 func (f *artAllocator) getNode16(addr nodeAddr) *node16 {
@@ -134,19 +137,18 @@ func (f *artAllocator) getNode16(addr nodeAddr) *node16 {
 		return nil
 	}
 	data := f.node16Allocator.getData(addr)
-	return (*node16)(unsafe.Pointer(&data))
+	return (*node16)(unsafe.Pointer(&data[0]))
 }
 
 func (f *artAllocator) allocNode48() (nodeAddr, *node48) {
 	addr, data := f.node48Allocator.alloc()
 	n48 := (*node48)(unsafe.Pointer(&data[0]))
-	// initialize basic node
-	n48.nodeNum = 0
-	n48.prefixLen = 0
-	n48.inplaceLeaf = nullAddr
-	// initialize node48
-	n48.present[0], n48.present[1], n48.present[2], n48.present[3] = 0, 0, 0, 0
+	n48.init()
 	return addr, n48
+}
+
+func (f *artAllocator) freeNode48(addr nodeAddr) {
+	f.node48Allocator.free(addr)
 }
 
 func (f *artAllocator) getNode48(addr nodeAddr) *node48 {
@@ -154,19 +156,18 @@ func (f *artAllocator) getNode48(addr nodeAddr) *node48 {
 		return nil
 	}
 	data := f.node48Allocator.getData(addr)
-	return (*node48)(unsafe.Pointer(&data))
+	return (*node48)(unsafe.Pointer(&data[0]))
 }
 
 func (f *artAllocator) allocNode256() (nodeAddr, *node256) {
 	addr, data := f.node256Allocator.alloc()
 	n256 := (*node256)(unsafe.Pointer(&data[0]))
-	// initialize basic node
-	n256.nodeNum = 0
-	n256.prefixLen = 0
-	n256.inplaceLeaf = nullAddr
-	// initialize node256
-	copy(n256.children[:], nullNode256.children[:])
+	n256.init()
 	return addr, n256
+}
+
+func (f *artAllocator) freeNode256(addr nodeAddr) {
+	f.node256Allocator.free(addr)
 }
 
 func (f *artAllocator) getNode256(addr nodeAddr) *node256 {
@@ -174,9 +175,29 @@ func (f *artAllocator) getNode256(addr nodeAddr) *node256 {
 		return nil
 	}
 	data := f.node256Allocator.getData(addr)
-	return (*node256)(unsafe.Pointer(&data))
+	return (*node256)(unsafe.Pointer(&data[0]))
 }
 
+func (f *artAllocator) allocLeaf(key Key) (nodeAddr, *leaf) {
+	size := leafSize + len(key)
+	addr, data := f.leafAllocator.alloc(size, true)
+	lf := (*leaf)(unsafe.Pointer(&data[0]))
+	lf.klen = uint16(len(key))
+	lf.flags = 0
+	lf.vAddr = nullAddr
+	copy(data[leafSize:], key)
+	return addr, lf
+}
+
+func (f *artAllocator) getLeaf(addr nodeAddr) *leaf {
+	if addr.isNull() {
+		return nil
+	}
+	data := f.leafAllocator.getData(addr)
+	return (*leaf)(unsafe.Pointer(&data[0]))
+}
+
+// fixedSizeArena get data of fixed size.
 func (f *fixedSizeArena) getData(addr nodeAddr) []byte {
 	return f.blocks[addr.idx].buf[addr.off : addr.off+f.fixedSize]
 }
@@ -189,6 +210,15 @@ func (f *fixedSizeArena) alloc() (nodeAddr, []byte) {
 	}
 	addr, data := f.memArena.alloc(int(f.fixedSize), true)
 	return addr, data
+}
+
+func (f *fixedSizeArena) free(addr nodeAddr) {
+	f.freeNodes = append(f.freeNodes, addr)
+}
+
+// memArena get all the data, DO NOT access others data.
+func (a *memArena) getData(addr nodeAddr) []byte {
+	return a.blocks[addr.idx].buf[addr.off:]
 }
 
 func (a *memArena) alloc(size int, align bool) (nodeAddr, []byte) {

@@ -1,6 +1,7 @@
 package art
 
 import (
+	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/kv"
 )
 
@@ -28,17 +29,22 @@ func (t *tree) Delete(key []byte) error {
 }
 
 func (t *tree) Get(key []byte) ([]byte, error) {
-	return nil, nil
+	_, leaf := t.traverse(key, false)
+	if leaf == nil || leaf.vAddr.isNull() {
+		return nil, tikverr.ErrNotExist
+	}
+	return t.getValue(leaf), nil
 }
 
 func (t *tree) set(key Key, value []byte, ops ...kv.FlagsOp) error {
-	t.traverse(key, true)
+	addr, leaf := t.traverse(key, true)
+	t.setValue(addr, leaf, value)
 	return nil
 }
 
 // traverse returns the node address of the key.
 // if insert is true, it will insert the key if not exists, unless nullAddr is returned.
-func (t *tree) traverse(key Key, insert bool) *leaf {
+func (t *tree) traverse(key Key, insert bool) (nodeAddr, *leaf) {
 	// lazy init root node and allocator.
 	// this saves memory for read only txns.
 	if t.root.addr.isNull() {
@@ -53,10 +59,10 @@ func (t *tree) traverse(key Key, insert bool) *leaf {
 		if current.isLeaf() {
 			leaf1 := current.leaf(&t.allocator)
 			if leaf1.match(key) {
-				return leaf1
+				return current.addr, leaf1
 			}
 			if !insert {
-				return nil
+				return nullAddr, nil
 			}
 			newLeafAddr, leaf2 := t.newLeaf(key)
 			lcp := t.longestCommonPrefix(leaf1, leaf2, depth)
@@ -70,7 +76,7 @@ func (t *tree) traverse(key Key, insert bool) *leaf {
 			} else {
 				prev.swapChild(&t.allocator, key.charAt(int(depth-1)), an)
 			}
-			return leaf2
+			return newLeafAddr.addr, leaf2
 		}
 
 		node := current.node(&t.allocator)
@@ -83,11 +89,11 @@ func (t *tree) traverse(key Key, insert bool) *leaf {
 
 				if next == nullArtNode {
 					if !insert {
-						return nil
+						return nullAddr, nil
 					}
 					newLeaf, lf := t.newLeaf(key)
 					current.addChild(&t.allocator, key.charAt(int(depth)), !key.valid(int(depth)), newLeaf)
-					return lf
+					return newLeaf.addr, lf
 				}
 				prev = current
 				current = next
@@ -119,17 +125,23 @@ func (t *tree) traverse(key Key, insert bool) *leaf {
 			} else {
 				prev.swapChild(&t.allocator, key.charAt(int(depth-1)), newArtNode)
 			}
-			return newLeaf
+			return newLeafAddr.addr, newLeaf
 		}
 		// next
 		next := current.findChild(&t.allocator, key.charAt(int(depth)), key.valid(int(depth)))
 		if next == nullArtNode {
 			if !insert {
-				return nil
+				return nullAddr, nil
 			}
 			newLeaf, lf := t.newLeaf(key)
-			current.addChild(&t.allocator, key.charAt(int(depth)), !key.valid(int(depth)), newLeaf)
-			return lf
+			if current.addChild(&t.allocator, key.charAt(int(depth)), !key.valid(int(depth)), newLeaf) {
+				if prev == nullArtNode {
+					t.root = current
+				} else {
+					prev.swapChild(&t.allocator, key.charAt(int(depth-1)), current)
+				}
+			}
+			return newLeaf.addr, lf
 		}
 		prev = current
 		current = next
@@ -158,4 +170,16 @@ func (t *tree) longestCommonPrefix(l1 *leaf, l2 *leaf, depth uint32) uint32 {
 	}
 
 	return idx - depth
+}
+
+func (t *tree) setValue(addr nodeAddr, l *leaf, value []byte) {
+	vAddr := t.allocator.allocValue(addr, nullAddr, value)
+	l.vAddr = vAddr
+}
+
+func (t *tree) getValue(l *leaf) []byte {
+	if l.vAddr.isNull() {
+		return nil
+	}
+	return t.allocator.getValue(l.vAddr)
 }

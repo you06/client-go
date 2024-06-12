@@ -305,3 +305,18 @@ func (hdr *vlogHdr) load(src []byte) {
 	cursor += 8
 	hdr.nodeAddr.load(src[cursor:])
 }
+
+func (f *artAllocator) allocValue(leafAddr nodeAddr, oldAddr nodeAddr, value []byte) nodeAddr {
+	addr, data := f.vlogAllocator.alloc(memdbVlogHdrSize+len(value), true)
+	copy(data[memdbVlogHdrSize:], value)
+	hdr := vlogHdr{leafAddr, oldAddr, uint32(len(value))}
+	hdr.store(data[:memdbVlogHdrSize])
+	return addr
+}
+
+func (f *artAllocator) getValue(valAddr nodeAddr) []byte {
+	data := f.vlogAllocator.getData(valAddr)
+	var hdr vlogHdr
+	hdr.load(data[:memdbVlogHdrSize])
+	return data[memdbVlogHdrSize : memdbVlogHdrSize+hdr.valueLen]
+}

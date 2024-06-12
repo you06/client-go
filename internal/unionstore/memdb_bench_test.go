@@ -40,6 +40,7 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
 	tikverr "github.com/tikv/client-go/v2/error"
 )
 
@@ -392,5 +393,35 @@ func benchIterator(b *testing.B, buffer iMemDB) {
 			iter.Next()
 		}
 		iter.Close()
+	}
+}
+
+func BenchmarkReadAfterWriteRBT(b *testing.B) {
+	buf := make([][]byte, b.N)
+	for i := 0; i < b.N; i++ {
+		key := []byte{byte(i)}
+		buf[i] = key
+	}
+	tree := newMemDB()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tree.set(buf[i], buf[i])
+		v, _ := tree.Get(buf[i])
+		assert.Equal(b, v, buf[i])
+	}
+}
+
+func BenchmarkReadAfterWriteArtNoArena(b *testing.B) {
+	buf := make([][]byte, b.N)
+	for i := 0; i < b.N; i++ {
+		key := []byte{byte(i)}
+		buf[i] = key
+	}
+	tree := newArtMemDB()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tree.Set(buf[i], buf[i])
+		v, _ := tree.Get(buf[i])
+		assert.Equal(b, v, buf[i])
 	}
 }

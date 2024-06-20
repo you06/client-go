@@ -2,6 +2,7 @@ package art
 
 import (
 	"encoding/binary"
+	"github.com/tikv/client-go/v2/kv"
 	"math"
 	"unsafe"
 
@@ -306,7 +307,8 @@ func (hdr *vlogHdr) load(src []byte) {
 	hdr.nodeAddr.load(src[cursor:])
 }
 
-func (f *artAllocator) allocValue(leafAddr nodeAddr, oldAddr nodeAddr, value []byte) nodeAddr {
+func (f *artAllocator) allocValue(leafAddr nodeAddr, oldAddr nodeAddr, value []byte, ops []kv.FlagsOp) nodeAddr {
+	//flag := kv.Flags(0)
 	addr, data := f.vlogAllocator.alloc(memdbVlogHdrSize+len(value), true)
 	copy(data[memdbVlogHdrSize:], value)
 	hdr := vlogHdr{leafAddr, oldAddr, uint32(len(value))}

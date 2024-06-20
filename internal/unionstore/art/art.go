@@ -7,28 +7,28 @@ import (
 
 var tombstone = []byte{}
 
-type tree struct {
+type art struct {
 	allocator artAllocator
 	root      artNode
 }
 
-func New() *tree {
-	t := &tree{
+func New() *art {
+	t := &art{
 		root: nullArtNode,
 	}
 	t.allocator.init()
 	return t
 }
 
-func (t *tree) Set(key, value []byte) error {
+func (t *art) Set(key, value []byte) error {
 	return t.set(key, value)
 }
 
-func (t *tree) Delete(key []byte) error {
+func (t *art) Delete(key []byte) error {
 	return t.set(key, tombstone)
 }
 
-func (t *tree) Get(key []byte) ([]byte, error) {
+func (t *art) Get(key []byte) ([]byte, error) {
 	_, leaf := t.traverse(key, false)
 	if leaf == nil || leaf.vAddr.isNull() {
 		return nil, tikverr.ErrNotExist
@@ -36,18 +36,21 @@ func (t *tree) Get(key []byte) ([]byte, error) {
 	return t.getValue(leaf), nil
 }
 
-func (t *tree) set(key Key, value []byte, ops ...kv.FlagsOp) error {
+func (t *art) set(key Key, value []byte, ops []kv.FlagsOp) error {
 	addr, leaf := t.traverse(key, true)
-	t.setValue(addr, leaf, value)
+	t.setValue(addr, leaf, value, ops)
 	return nil
 }
 
 // traverse returns the node address of the key.
 // if insert is true, it will insert the key if not exists, unless nullAddr is returned.
-func (t *tree) traverse(key Key, insert bool) (nodeAddr, *leaf) {
+func (t *art) traverse(key Key, insert bool) (nodeAddr, *leaf) {
 	// lazy init root node and allocator.
 	// this saves memory for read only txns.
 	if t.root.addr.isNull() {
+		if !insert {
+			return nullAddr, nil
+		}
 		addr, _ := t.allocator.node4Allocator.alloc()
 		t.root = artNode{kind: typeNode4, addr: addr}
 	}
@@ -65,12 +68,13 @@ func (t *tree) traverse(key Key, insert bool) (nodeAddr, *leaf) {
 				return nullAddr, nil
 			}
 			newLeafAddr, leaf2 := t.newLeaf(key)
-			lcp := t.longestCommonPrefix(leaf1, leaf2, depth)
+			l1Key, l2Key := leaf1.getKey(), leaf2.getKey()
+			lcp := t.longestCommonPrefix(l1Key, l2Key, depth)
 			an, n4 := t.newNode4()
 			n4.setPrefix(key[depth:], lcp)
 			depth += lcp
-			an.addChild(&t.allocator, key.charAt(int(depth+lcp)), key.valid(int(depth+lcp)), current)
-			an.addChild(&t.allocator, key.charAt(int(depth+lcp)), key.valid(int(depth+lcp)), newLeafAddr)
+			an.addChild(&t.allocator, l1Key.charAt(int(depth+lcp)), !l1Key.valid(int(depth+lcp)), current)
+			an.addChild(&t.allocator, l2Key.charAt(int(depth+lcp)), !l2Key.valid(int(depth+lcp)), newLeafAddr)
 			if prev == nullArtNode {
 				t.root = an
 			} else {
@@ -128,7 +132,8 @@ func (t *tree) traverse(key Key, insert bool) (nodeAddr, *leaf) {
 			return newLeafAddr.addr, newLeaf
 		}
 		// next
-		next := current.findChild(&t.allocator, key.charAt(int(depth)), key.valid(int(depth)))
+		valid := key.valid(int(depth))
+		next := current.findChild(&t.allocator, key.charAt(int(depth)), valid)
 		if next == nullArtNode {
 			if !insert {
 				return nullAddr, nil
@@ -143,6 +148,9 @@ func (t *tree) traverse(key Key, insert bool) (nodeAddr, *leaf) {
 			}
 			return newLeaf.addr, lf
 		}
+		if !valid && next.kind == typeLeaf {
+			return next.addr, next.leaf(&t.allocator)
+		}
 		prev = current
 		current = next
 		depth++
@@ -150,21 +158,20 @@ func (t *tree) traverse(key Key, insert bool) (nodeAddr, *leaf) {
 	}
 }
 
-func (t *tree) newNode4() (artNode, *node4) {
+func (t *art) newNode4() (artNode, *node4) {
 	addr, n4 := t.allocator.allocNode4()
 	return artNode{kind: typeNode4, addr: addr}, n4
 }
 
-func (t *tree) newLeaf(key Key) (artNode, *leaf) {
+func (t *art) newLeaf(key Key) (artNode, *leaf) {
 	addr, lf := t.allocator.allocLeaf(key)
 	return artNode{kind: typeLeaf, addr: addr}, lf
 }
 
-func (t *tree) longestCommonPrefix(l1 *leaf, l2 *leaf, depth uint32) uint32 {
-	l1key, l2key := l1.getKey(), l2.getKey()
-	idx, limit := depth, min(uint32(len(l1key)), uint32(len(l2key)))
+func (t *art) longestCommonPrefix(l1Key, l2Key Key, depth uint32) uint32 {
+	idx, limit := depth, min(uint32(len(l1Key)), uint32(len(l2Key)))
 	for ; idx < limit; idx++ {
-		if l1key[idx] != l2key[idx] {
+		if l1Key[idx] != l2Key[idx] {
 			break
 		}
 	}
@@ -172,12 +179,12 @@ func (t *tree) longestCommonPrefix(l1 *leaf, l2 *leaf, depth uint32) uint32 {
 	return idx - depth
 }
 
-func (t *tree) setValue(addr nodeAddr, l *leaf, value []byte) {
-	vAddr := t.allocator.allocValue(addr, nullAddr, value)
+func (t *art) setValue(addr nodeAddr, l *leaf, value []byte, ops []kv.FlagsOp) {
+	vAddr := t.allocator.allocValue(addr, nullAddr, value, ops)
 	l.vAddr = vAddr
 }
 
-func (t *tree) getValue(l *leaf) []byte {
+func (t *art) getValue(l *leaf) []byte {
 	if l.vAddr.isNull() {
 		return nil
 	}

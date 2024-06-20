@@ -22,16 +22,32 @@ func TestSimple(t *testing.T) {
 	}
 }
 
+func TestSubNode(t *testing.T) {
+	tree := New()
+	assert.Nil(t, tree.Set([]byte("a"), []byte("a")))
+	assert.Nil(t, tree.Set([]byte("aa"), []byte("aa")))
+	assert.Nil(t, tree.Set([]byte("aaa"), []byte("aaa")))
+	v, err := tree.Get([]byte("a"))
+	assert.Nil(t, err)
+	assert.Equal(t, v, []byte("a"))
+	v, err = tree.Get([]byte("aa"))
+	assert.Nil(t, err)
+	assert.Equal(t, v, []byte("aa"))
+	v, err = tree.Get([]byte("aaa"))
+	assert.Nil(t, err)
+	assert.Equal(t, v, []byte("aaa"))
+}
+
 // func BenchmarkTraverse(b *testing.B) {
 // 	buf := make([][]byte, b.N)
 // 	for i := range buf {
 // 		buf[i] = []byte(strconv.Itoa(i))
 // 	}
 
-// 	tree := New()
+// 	art := New()
 // 	b.ResetTimer()
 // 	for i := 0; i < b.N; i++ {
-// 		tree.traverse(buf[i], true)
+// 		art.traverse(buf[i], true)
 // 	}
 // }
 

@@ -1,9 +1,10 @@
 package art
 
 import (
+	"sync"
+
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/kv"
-	"sync"
 )
 
 var tombstone = []byte{}
@@ -27,6 +28,14 @@ func (t *Art) Set(key, value []byte) error {
 	return t.set(key, value, nil)
 }
 
+// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
+func (t *Art) SetWithFlags(key []byte, value []byte, ops ...kv.FlagsOp) error {
+	if len(value) == 0 {
+		return tikverr.ErrCannotSetNilValue
+	}
+	return t.set(key, value, ops)
+}
+
 func (t *Art) Delete(key []byte) error {
 	return t.set(key, tombstone, nil)
 }
@@ -37,6 +46,15 @@ func (t *Art) Get(key []byte) ([]byte, error) {
 		return nil, tikverr.ErrNotExist
 	}
 	return t.getValue(leaf), nil
+}
+
+// GetFlags returns the latest flags associated with key.
+func (t *Art) GetFlags(key []byte) (kv.KeyFlags, error) {
+	_, leaf := t.search(key)
+	if leaf == nil {
+		return 0, tikverr.ErrNotExist
+	}
+	return kv.KeyFlags(leaf.flags), nil
 }
 
 func (t *Art) set(key Key, value []byte, ops []kv.FlagsOp) error {
@@ -237,6 +255,9 @@ func (t *Art) setValue(addr nodeAddr, l *leaf, value []byte, ops []kv.FlagsOp) {
 		flags = kv.ApplyFlagsOps(l.getKeyFlags(), ops...)
 	}
 	l.flags = uint16(flags)
+	if t.allocator.trySwapValue(l.vAddr, value) {
+		return
+	}
 	vAddr := t.allocator.allocValue(addr, nullAddr, value)
 	l.vAddr = vAddr
 }

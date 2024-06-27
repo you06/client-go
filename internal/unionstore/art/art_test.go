@@ -2,6 +2,7 @@ package art
 
 import (
 	"fmt"
+	"github.com/tikv/client-go/v2/kv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -81,4 +82,43 @@ func TestLeafWithCommonPrefix(t *testing.T) {
 	v, err = tree.Get([]byte{1, 1, 2})
 	assert.Nil(t, err)
 	assert.Equal(t, v, []byte{1, 1, 2})
+}
+
+func TestUpdateInplace(t *testing.T) {
+	tree := New()
+	key := []byte{0}
+	for i := 0; i < 256; i++ {
+		val := []byte{byte(i)}
+		tree.Set(key, val)
+		assert.Len(t, tree.allocator.vlogAllocator.blocks, 1)
+		assert.Equal(t, tree.allocator.vlogAllocator.blocks[0].length, memdbVlogHdrSize+1)
+	}
+}
+
+func TestFlag(t *testing.T) {
+	tree := New()
+	tree.SetWithFlags([]byte{0}, []byte{0}, kv.SetPresumeKeyNotExists)
+	flags, err := tree.GetFlags([]byte{0})
+	assert.Nil(t, err)
+	assert.True(t, flags.HasPresumeKeyNotExists())
+	tree.SetWithFlags([]byte{1}, []byte{1}, kv.SetKeyLocked)
+	flags, err = tree.GetFlags([]byte{1})
+	assert.Nil(t, err)
+	assert.True(t, flags.HasLocked())
+	// iterate can also see the flags
+	it, err := tree.Iter(nil, nil)
+	assert.Nil(t, err)
+	assert.True(t, it.Valid())
+	assert.Equal(t, it.Key(), []byte{0})
+	assert.Equal(t, it.Value(), []byte{0})
+	assert.True(t, it.Flags().HasPresumeKeyNotExists())
+	assert.False(t, it.Flags().HasLocked())
+	assert.Nil(t, it.Next())
+	assert.True(t, it.Valid())
+	assert.Equal(t, it.Key(), []byte{1})
+	assert.Equal(t, it.Value(), []byte{1})
+	assert.True(t, it.Flags().HasLocked())
+	assert.False(t, it.Flags().HasPresumeKeyNotExists())
+	assert.Nil(t, it.Next())
+	assert.False(t, it.Valid())
 }

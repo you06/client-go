@@ -327,3 +327,19 @@ func (f *artAllocator) getValue(valAddr nodeAddr) []byte {
 	hdr.load(data[:memdbVlogHdrSize])
 	return data[memdbVlogHdrSize : memdbVlogHdrSize+hdr.valueLen]
 }
+
+func (f *artAllocator) trySwapValue(valAddr nodeAddr, val []byte) bool {
+	if valAddr.isNull() {
+		return false
+	}
+	data := f.vlogAllocator.getData(valAddr)
+	var hdr vlogHdr
+	hdr.load(data[:memdbVlogHdrSize])
+	if int(hdr.valueLen) < len(val) {
+		return false
+	}
+	copy(data[memdbVlogHdrSize:], val)
+	hdr.valueLen = uint32(len(val))
+	hdr.store(data[:memdbVlogHdrSize])
+	return true
+}

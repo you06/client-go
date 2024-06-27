@@ -2,6 +2,7 @@ package art
 
 import (
 	"github.com/pkg/errors"
+	"github.com/tikv/client-go/v2/kv"
 )
 
 type ArtIterator struct {
@@ -91,6 +92,10 @@ func (it *ArtIterator) Valid() bool { return len(it.nodes) > 0 }
 
 func (it *ArtIterator) Key() []byte {
 	return it.currLeaf.getKey()
+}
+
+func (it *ArtIterator) Flags() kv.KeyFlags {
+	return kv.KeyFlags(it.currLeaf.flags)
 }
 
 func (it *ArtIterator) Value() []byte {

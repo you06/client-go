@@ -2,7 +2,6 @@ package art
 
 import (
 	"encoding/binary"
-	"github.com/tikv/client-go/v2/kv"
 	"math"
 	"unsafe"
 
@@ -59,8 +58,9 @@ type memArenaBlock struct {
 }
 
 type memArena struct {
-	blockSize int
-	blocks    []memArenaBlock
+	initBlockSize int
+	blockSize     int
+	blocks        []memArenaBlock
 	// the total size of all blocks, also the approximate memory footprint of the arena.
 	capacity uint64
 }
@@ -95,9 +95,15 @@ type artAllocator struct {
 
 func (allocator *artAllocator) init() {
 	allocator.node4Allocator.fixedSize = uint32(node4size)
+	allocator.node4Allocator.initBlockSize = node4size * 16
 	allocator.node16Allocator.fixedSize = uint32(node16size)
+	allocator.node16Allocator.initBlockSize = node16size * 8
 	allocator.node48Allocator.fixedSize = uint32(node48size)
+	allocator.node48Allocator.initBlockSize = node48size * 4
 	allocator.node256Allocator.fixedSize = uint32(node256size)
+	allocator.node256Allocator.initBlockSize = node256size * 2
+	allocator.leafAllocator.initBlockSize = initBlockSize
+	allocator.vlogAllocator.initBlockSize = initBlockSize
 }
 
 func (f *artAllocator) allocNode4() (nodeAddr, *node4) {
@@ -228,7 +234,7 @@ func (a *memArena) alloc(size int, align bool) (nodeAddr, []byte) {
 	}
 
 	if len(a.blocks) == 0 {
-		a.enlarge(size, initBlockSize)
+		a.enlarge(size, a.initBlockSize)
 	}
 
 	addr, data := a.allocInLastBlock(size, align)
@@ -307,8 +313,7 @@ func (hdr *vlogHdr) load(src []byte) {
 	hdr.nodeAddr.load(src[cursor:])
 }
 
-func (f *artAllocator) allocValue(leafAddr nodeAddr, oldAddr nodeAddr, value []byte, ops []kv.FlagsOp) nodeAddr {
-	//flag := kv.Flags(0)
+func (f *artAllocator) allocValue(leafAddr nodeAddr, oldAddr nodeAddr, value []byte) nodeAddr {
 	addr, data := f.vlogAllocator.alloc(memdbVlogHdrSize+len(value), true)
 	copy(data[memdbVlogHdrSize:], value)
 	hdr := vlogHdr{leafAddr, oldAddr, uint32(len(value))}

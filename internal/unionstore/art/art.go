@@ -3,40 +3,47 @@ package art
 import (
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/kv"
+	"sync"
 )
 
 var tombstone = []byte{}
 
-type art struct {
+type Art struct {
+	sync.RWMutex
+	skipMutex bool
 	allocator artAllocator
 	root      artNode
 }
 
-func New() *art {
-	t := &art{
+func New() *Art {
+	t := &Art{
 		root: nullArtNode,
 	}
 	t.allocator.init()
 	return t
 }
 
-func (t *art) Set(key, value []byte) error {
-	return t.set(key, value)
+func (t *Art) Set(key, value []byte) error {
+	return t.set(key, value, nil)
 }
 
-func (t *art) Delete(key []byte) error {
-	return t.set(key, tombstone)
+func (t *Art) Delete(key []byte) error {
+	return t.set(key, tombstone, nil)
 }
 
-func (t *art) Get(key []byte) ([]byte, error) {
-	_, leaf := t.traverse(key, false)
+func (t *Art) Get(key []byte) ([]byte, error) {
+	_, leaf := t.search(key)
 	if leaf == nil || leaf.vAddr.isNull() {
 		return nil, tikverr.ErrNotExist
 	}
 	return t.getValue(leaf), nil
 }
 
-func (t *art) set(key Key, value []byte, ops []kv.FlagsOp) error {
+func (t *Art) set(key Key, value []byte, ops []kv.FlagsOp) error {
+	if !t.skipMutex {
+		t.Lock()
+		defer t.Unlock()
+	}
 	addr, leaf := t.traverse(key, true)
 	t.setValue(addr, leaf, value, ops)
 	return nil
@@ -44,14 +51,14 @@ func (t *art) set(key Key, value []byte, ops []kv.FlagsOp) error {
 
 // traverse returns the node address of the key.
 // if insert is true, it will insert the key if not exists, unless nullAddr is returned.
-func (t *art) traverse(key Key, insert bool) (nodeAddr, *leaf) {
+func (t *Art) traverse(key Key, insert bool) (nodeAddr, *leaf) {
 	// lazy init root node and allocator.
 	// this saves memory for read only txns.
 	if t.root.addr.isNull() {
 		if !insert {
 			return nullAddr, nil
 		}
-		addr, _ := t.allocator.node4Allocator.alloc()
+		addr, _ := t.allocator.allocNode4()
 		t.root = artNode{kind: typeNode4, addr: addr}
 	}
 
@@ -59,6 +66,7 @@ func (t *art) traverse(key Key, insert bool) (nodeAddr, *leaf) {
 	prev := nullArtNode
 	current := t.root
 	for {
+		prevDepth := int(depth - 1)
 		if current.isLeaf() {
 			leaf1 := current.leaf(&t.allocator)
 			if leaf1.match(key) {
@@ -73,12 +81,12 @@ func (t *art) traverse(key Key, insert bool) (nodeAddr, *leaf) {
 			an, n4 := t.newNode4()
 			n4.setPrefix(key[depth:], lcp)
 			depth += lcp
-			an.addChild(&t.allocator, l1Key.charAt(int(depth+lcp)), !l1Key.valid(int(depth+lcp)), current)
-			an.addChild(&t.allocator, l2Key.charAt(int(depth+lcp)), !l2Key.valid(int(depth+lcp)), newLeafAddr)
+			an.addChild(&t.allocator, l1Key.charAt(int(depth)), !l1Key.valid(int(depth)), current)
+			an.addChild(&t.allocator, l2Key.charAt(int(depth)), !l2Key.valid(int(depth)), newLeafAddr)
 			if prev == nullArtNode {
 				t.root = an
 			} else {
-				prev.swapChild(&t.allocator, key.charAt(int(depth-1)), an)
+				prev.swapChild(&t.allocator, key.charAt(prevDepth), an)
 			}
 			return newLeafAddr.addr, leaf2
 		}
@@ -96,7 +104,14 @@ func (t *art) traverse(key Key, insert bool) (nodeAddr, *leaf) {
 						return nullAddr, nil
 					}
 					newLeaf, lf := t.newLeaf(key)
-					current.addChild(&t.allocator, key.charAt(int(depth)), !key.valid(int(depth)), newLeaf)
+					grown := current.addChild(&t.allocator, key.charAt(int(depth)), !key.valid(int(depth)), newLeaf)
+					if grown {
+						if prev == nullArtNode {
+							t.root = current
+						} else {
+							prev.swapChild(&t.allocator, key.charAt(prevDepth), current)
+						}
+					}
 					return newLeaf.addr, lf
 				}
 				prev = current
@@ -107,13 +122,14 @@ func (t *art) traverse(key Key, insert bool) (nodeAddr, *leaf) {
 			// instead, we split the node into different prefixes.
 			newArtNode, newN4 := t.newNode4()
 			newN4.prefixLen = uint8(mismatchIdx)
-			copy(newN4.prefix[:], key[depth:depth+uint32(mismatchIdx)])
+			copy(newN4.prefix[:], key[depth:depth+mismatchIdx])
 
 			// move the current node as the children of the new node.
 			if node.prefixLen <= maxPrefixLen {
+				nodeKey := node.prefix[mismatchIdx]
 				node.prefixLen -= uint8(mismatchIdx + 1)
-				copy(node.prefix[:], node.prefix[mismatchIdx:])
-				newArtNode.addChild(&t.allocator, key.charAt(int(depth+mismatchIdx)), !key.valid(int(depth+mismatchIdx)), current)
+				copy(node.prefix[:], node.prefix[mismatchIdx+1:])
+				newArtNode.addChild(&t.allocator, nodeKey, false, current)
 			} else {
 				node.prefixLen -= uint8(mismatchIdx + 1)
 				leaf := current.minimum(&t.allocator)
@@ -127,7 +143,7 @@ func (t *art) traverse(key Key, insert bool) (nodeAddr, *leaf) {
 			if prev == nullArtNode {
 				t.root = newArtNode
 			} else {
-				prev.swapChild(&t.allocator, key.charAt(int(depth-1)), newArtNode)
+				prev.swapChild(&t.allocator, key.charAt(prevDepth), newArtNode)
 			}
 			return newLeafAddr.addr, newLeaf
 		}
@@ -143,7 +159,7 @@ func (t *art) traverse(key Key, insert bool) (nodeAddr, *leaf) {
 				if prev == nullArtNode {
 					t.root = current
 				} else {
-					prev.swapChild(&t.allocator, key.charAt(int(depth-1)), current)
+					prev.swapChild(&t.allocator, key.charAt(prevDepth), current)
 				}
 			}
 			return newLeaf.addr, lf
@@ -158,17 +174,50 @@ func (t *art) traverse(key Key, insert bool) (nodeAddr, *leaf) {
 	}
 }
 
-func (t *art) newNode4() (artNode, *node4) {
+func (t *Art) search(key Key) (nodeAddr, *leaf) {
+	current := t.root
+	if current == nullArtNode {
+		return nullAddr, nil
+	}
+	depth := uint32(0)
+	for {
+		if current.isLeaf() {
+			lf := current.leaf(&t.allocator)
+			if lf.match(key) {
+				return current.addr, lf
+			}
+			return nullAddr, nil
+		}
+
+		node := current.node(&t.allocator)
+		if node.prefixLen > 0 {
+			prefixLen := node.match(key, depth)
+			if int(prefixLen) != min(int(node.prefixLen), maxPrefixLen) {
+				return nullAddr, nil
+			}
+			depth += uint32(node.prefixLen)
+		}
+
+		current = current.findChild(&t.allocator, key.charAt(int(depth)), key.valid(int(depth)))
+		if current.addr == nullAddr {
+			return nullAddr, nil
+		}
+		depth++
+	}
+	return nullAddr, nil
+}
+
+func (t *Art) newNode4() (artNode, *node4) {
 	addr, n4 := t.allocator.allocNode4()
 	return artNode{kind: typeNode4, addr: addr}, n4
 }
 
-func (t *art) newLeaf(key Key) (artNode, *leaf) {
+func (t *Art) newLeaf(key Key) (artNode, *leaf) {
 	addr, lf := t.allocator.allocLeaf(key)
 	return artNode{kind: typeLeaf, addr: addr}, lf
 }
 
-func (t *art) longestCommonPrefix(l1Key, l2Key Key, depth uint32) uint32 {
+func (t *Art) longestCommonPrefix(l1Key, l2Key Key, depth uint32) uint32 {
 	idx, limit := depth, min(uint32(len(l1Key)), uint32(len(l2Key)))
 	for ; idx < limit; idx++ {
 		if l1Key[idx] != l2Key[idx] {
@@ -179,12 +228,20 @@ func (t *art) longestCommonPrefix(l1Key, l2Key Key, depth uint32) uint32 {
 	return idx - depth
 }
 
-func (t *art) setValue(addr nodeAddr, l *leaf, value []byte, ops []kv.FlagsOp) {
-	vAddr := t.allocator.allocValue(addr, nullAddr, value, ops)
+func (t *Art) setValue(addr nodeAddr, l *leaf, value []byte, ops []kv.FlagsOp) {
+	var flags kv.KeyFlags
+	if value != nil {
+		flags = kv.ApplyFlagsOps(l.getKeyFlags(), append([]kv.FlagsOp{kv.DelNeedConstraintCheckInPrewrite}, ops...)...)
+	} else {
+		// an UpdateFlag operation, do not delete the NeedConstraintCheckInPrewrite flag.
+		flags = kv.ApplyFlagsOps(l.getKeyFlags(), ops...)
+	}
+	l.flags = uint16(flags)
+	vAddr := t.allocator.allocValue(addr, nullAddr, value)
 	l.vAddr = vAddr
 }
 
-func (t *art) getValue(l *leaf) []byte {
+func (t *Art) getValue(l *leaf) []byte {
 	if l.vAddr.isNull() {
 		return nil
 	}

@@ -42,6 +42,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	tikverr "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/internal/unionstore/art"
 )
 
 const (
@@ -83,6 +84,20 @@ func BenchmarkPutArt(b *testing.B) {
 	}
 
 	p := newArtMemDB()
+	b.ResetTimer()
+
+	for i := range buf {
+		p.Set(buf[i][:keySize], buf[i][:])
+	}
+}
+
+func BenchmarkPutNewArt(b *testing.B) {
+	buf := make([][valueSize]byte, b.N)
+	for i := range buf {
+		binary.BigEndian.PutUint32(buf[i][:], uint32(i))
+	}
+
+	p := art.New()
 	b.ResetTimer()
 
 	for i := range buf {
@@ -132,6 +147,20 @@ func BenchmarkPutRandomArt(b *testing.B) {
 	}
 }
 
+func BenchmarkPutRandomNewArt(b *testing.B) {
+	buf := make([][valueSize]byte, b.N)
+	for i := range buf {
+		binary.LittleEndian.PutUint32(buf[i][:], uint32(rand.Int()))
+	}
+
+	p := art.New()
+	b.ResetTimer()
+
+	for i := range buf {
+		p.Set(buf[i][:keySize], buf[i][:])
+	}
+}
+
 func BenchmarkPutRandomHashMap(b *testing.B) {
 	buf := make([][valueSize]byte, b.N)
 	for i := range buf {
@@ -163,6 +192,40 @@ func BenchmarkGet(b *testing.B) {
 	}
 }
 
+func BenchmarkGetArt(b *testing.B) {
+	buf := make([][valueSize]byte, b.N)
+	for i := range buf {
+		binary.BigEndian.PutUint32(buf[i][:], uint32(i))
+	}
+
+	p := newArtMemDB()
+	for i := range buf {
+		p.Set(buf[i][:keySize], buf[i][:])
+	}
+
+	b.ResetTimer()
+	for i := range buf {
+		p.Get(buf[i][:keySize])
+	}
+}
+
+func BenchmarkGetNewArt(b *testing.B) {
+	buf := make([][valueSize]byte, b.N)
+	for i := range buf {
+		binary.BigEndian.PutUint32(buf[i][:], uint32(i))
+	}
+
+	p := art.New()
+	for i := range buf {
+		p.Set(buf[i][:keySize], buf[i][:])
+	}
+
+	b.ResetTimer()
+	for i := range buf {
+		p.Get(buf[i][:keySize])
+	}
+}
+
 func BenchmarkGetRandom(b *testing.B) {
 	buf := make([][valueSize]byte, b.N)
 	for i := range buf {
@@ -178,6 +241,48 @@ func BenchmarkGetRandom(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		p.Get(buf[i][:keySize])
 	}
+}
+
+func BenchmarkGetRandomArt(b *testing.B) {
+	buf := make([][valueSize]byte, b.N)
+	for i := range buf {
+		binary.LittleEndian.PutUint32(buf[i][:], uint32(rand.Int()))
+	}
+
+	p := newArtMemDB()
+	for i := range buf {
+		p.Set(buf[i][:keySize], buf[i][:])
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		p.Get(buf[i][:keySize])
+	}
+}
+
+func BenchmarkGetRandomNewArt(b *testing.B) {
+	buf := make([][valueSize]byte, b.N)
+	for i := range buf {
+		binary.LittleEndian.PutUint32(buf[i][:], uint32(rand.Int()))
+	}
+
+	p := art.New()
+	for i := range buf {
+		p.Set(buf[i][:keySize], buf[i][:])
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		p.Get(buf[i][:keySize])
+	}
+}
+
+type artWrapper struct {
+	*art.Art
+}
+
+func (a *artWrapper) Iter(lower, upper []byte) (Iterator, error) {
+	return a.Art.Iter(lower, upper)
 }
 
 var opCnt = 100000
@@ -198,6 +303,16 @@ func BenchmarkMemDbBufferSequentialArt(b *testing.B) {
 		data[i] = encodeInt(i)
 	}
 	buffer := newArtMemDB()
+	benchmarkSetGet(b, buffer, data)
+	b.ReportAllocs()
+}
+
+func BenchmarkMemDbBufferSequentialNewArt(b *testing.B) {
+	data := make([][]byte, opCnt)
+	for i := 0; i < opCnt; i++ {
+		data[i] = encodeInt(i)
+	}
+	buffer := &artWrapper{art.New()}
 	benchmarkSetGet(b, buffer, data)
 	b.ReportAllocs()
 }
@@ -255,6 +370,17 @@ func BenchmarkMemDbBufferRandomArt(b *testing.B) {
 	}
 	shuffle(data)
 	buffer := newArtMemDB()
+	benchmarkSetGet(b, buffer, data)
+	b.ReportAllocs()
+}
+
+func BenchmarkMemDbBufferRandomNewArt(b *testing.B) {
+	data := make([][]byte, opCnt)
+	for i := 0; i < opCnt; i++ {
+		data[i] = encodeInt(i)
+	}
+	shuffle(data)
+	buffer := &artWrapper{art.New()}
 	benchmarkSetGet(b, buffer, data)
 	b.ReportAllocs()
 }
@@ -341,6 +467,12 @@ func BenchmarkMemDbIter(b *testing.B) {
 
 func BenchmarkMemDbIterArt(b *testing.B) {
 	buffer := newArtMemDB()
+	benchIterator(b, buffer)
+	b.ReportAllocs()
+}
+
+func BenchmarkMemDbIterNewArt(b *testing.B) {
+	buffer := &artWrapper{art.New()}
 	benchIterator(b, buffer)
 	b.ReportAllocs()
 }

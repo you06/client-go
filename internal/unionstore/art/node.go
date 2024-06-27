@@ -2,7 +2,11 @@ package art
 
 import (
 	"bytes"
+	"math"
+	"math/bits"
 	"unsafe"
+
+	"github.com/tikv/client-go/v2/kv"
 )
 
 type nodeKind uint16
@@ -152,6 +156,25 @@ func (n48 *node48) init() {
 	copy(n48.children[:], nullNode48.children[:])
 }
 
+func (n48 *node48) isPresent(idx int) bool {
+	return n48.present[idx>>n48s]&(1<<uint8(idx%n48m)) != 0
+}
+
+func (n48 *node48) nextPresentIdx(start int) int {
+	for presentOffset := start >> n48s; presentOffset < 4; presentOffset++ {
+		present := n48.present[presentOffset]
+		offset := start % n48m
+		start = 0
+		mask := math.MaxUint64 - (uint64(1) << offset) + 1 // 0b111...111000
+		curr := present & mask
+		zeros := bits.TrailingZeros64(curr)
+		if zeros < n48m {
+			return presentOffset*n48m + zeros
+		}
+	}
+	return 256
+}
+
 func (n256 *node256) init() {
 	// initialize basic node
 	n256.nodeNum = 0
@@ -159,6 +182,15 @@ func (n256 *node256) init() {
 	n256.inplaceLeaf = nullArtNode
 	// initialize node256
 	copy(n256.children[:], nullNode256.children[:])
+}
+
+func (n256 *node256) nextPresentIdx(start int) int {
+	for ; start < node256cap; start++ {
+		if !n256.children[start].addr.isNull() {
+			return start
+		}
+	}
+	return start
 }
 
 // key methods
@@ -175,9 +207,9 @@ func (k Key) valid(pos int) bool {
 
 // leaf methods
 
-func (n *leaf) getKey() Key {
-	base := unsafe.Add(unsafe.Pointer(n), leafSize)
-	return unsafe.Slice((*byte)(base), int(n.klen))
+func (l *leaf) getKey() Key {
+	base := unsafe.Add(unsafe.Pointer(l), leafSize)
+	return unsafe.Slice((*byte)(base), int(l.klen))
 }
 
 func (l *leaf) match(key Key) bool {
@@ -189,8 +221,11 @@ func (l *leaf) match(key Key) bool {
 	if key == nil || len(lKey) != len(key) {
 		return false
 	}
-
 	return bytes.Compare(lKey[:len(key)], key) == 0
+}
+
+func (l *leaf) getKeyFlags() kv.KeyFlags {
+	return kv.KeyFlags(l.flags)
 }
 
 // Node methods
@@ -421,6 +456,10 @@ func (an *artNode) _addChild4(a *artAllocator, c byte, inplace bool, child artNo
 	node.keys[i] = c
 	node.children[i] = child
 	node.nodeNum++
+	if node.keys[0] == 49 && node.keys[1] == 49 {
+		a := 1
+		_ = a
+	}
 	return false
 }
 
@@ -480,7 +519,7 @@ func (an *artNode) _addChild48(a *artAllocator, c byte, inplace bool, child artN
 		}
 	}
 	node.keys[c] = uint8(lower)
-	node.present[c>>n48s] |= (1 << (c % n48m))
+	node.present[c>>n48s] |= 1 << (c % n48m)
 	node.children[lower] = child
 	node.nodeNum++
 	return false

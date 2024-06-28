@@ -25,29 +25,6 @@ func TestNodeSize(t *testing.T) {
 	require.Equal(t, int(unsafe.Sizeof(nLeaf)), leafSize)
 }
 
-func TestAllocSize(t *testing.T) {
-	var allocator artAllocator
-	allocator.init()
-
-	require.Equal(t, int(allocator.node4Allocator.fixedSize), node4size)
-	require.Equal(t, int(allocator.node16Allocator.fixedSize), node16size)
-	require.Equal(t, int(allocator.node48Allocator.fixedSize), node48size)
-	require.Equal(t, int(allocator.node256Allocator.fixedSize), node256size)
-
-	addr, data := allocator.node4Allocator.alloc()
-	require.False(t, addr.isNull())
-	require.Len(t, data, node4size)
-	addr, data = allocator.node16Allocator.alloc()
-	require.False(t, addr.isNull())
-	require.Len(t, data, node16size)
-	addr, data = allocator.node48Allocator.alloc()
-	require.False(t, addr.isNull())
-	require.Len(t, data, node48size)
-	addr, data = allocator.node256Allocator.alloc()
-	require.False(t, addr.isNull())
-	require.Len(t, data, node256size)
-}
-
 func checkNodeInitilization(t *testing.T, n any) {
 	var node *node
 	switch n := n.(type) {

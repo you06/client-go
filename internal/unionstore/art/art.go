@@ -215,7 +215,7 @@ func (t *Art) search(key Key) (nodeAddr, *leaf) {
 		node := current.node(&t.allocator)
 		if node.prefixLen > 0 {
 			prefixLen := node.match(key, depth)
-			if int(prefixLen) != min(int(node.prefixLen), maxPrefixLen) {
+			if prefixLen < uint32(node.prefixLen) {
 				return nullAddr, nil
 			}
 			depth += uint32(node.prefixLen)
@@ -435,6 +435,7 @@ func (t *Art) truncate(snap *ARTCheckpoint) {
 	for _, block := range vlogAllocator.blocks {
 		vlogAllocator.capacity += uint64(block.length)
 	}
+	// We shall not call a.onMemChange() here, since it may cause a panic and leave memdb in an inconsistent state
 }
 
 // Checkpoint returns a checkpoint of MemDB.
@@ -511,4 +512,35 @@ func (t *Art) selectValueHistory(addr nodeAddr, predicate func(nodeAddr) bool) n
 		addr = hdr.oldValue
 	}
 	return nullAddr
+}
+
+func (t *Art) SetMemoryFootprintChangeHook(fn func(uint64)) {
+	hook := func() {
+		fn(t.allocator.nodeAllocator.capacity + t.allocator.vlogAllocator.capacity)
+	}
+	t.allocator.nodeAllocator.memChangeHook.Store(&hook)
+	t.allocator.vlogAllocator.memChangeHook.Store(&hook)
+}
+
+// MemHookSet implements the MemBuffer interface.
+func (t *Art) MemHookSet() bool {
+	return t.allocator.nodeAllocator.memChangeHook.Load() != nil
+}
+
+// GetKeyByHandle returns key by handle.
+func (t *Art) GetKeyByHandle(handle ArtMemKeyHandle) []byte {
+	lf := t.allocator.getLeaf(handle.toAddr())
+	return lf.getKey()
+}
+
+// GetValueByHandle returns value by handle.
+func (t *Art) GetValueByHandle(handle ArtMemKeyHandle) ([]byte, bool) {
+	if t.vlogInvalid {
+		return nil, false
+	}
+	lf := t.allocator.getLeaf(handle.toAddr())
+	if lf.vAddr.isNull() {
+		return nil, false
+	}
+	return t.allocator.getValue(lf.vAddr), true
 }

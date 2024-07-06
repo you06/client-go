@@ -12,6 +12,7 @@ type ArtIterator struct {
 	nodes    []artNode // node stack
 	idxes    []int     // index stack
 	currLeaf *leaf
+	currAddr nodeAddr
 	//reverse      bool
 	//includeFlags bool
 }
@@ -102,16 +103,83 @@ func (it *ArtIterator) Value() []byte {
 	return it.tree.getValue(it.currLeaf)
 }
 
+// seek the first leaf node that >= key
+// if reverse, seek the last leaf node that <= key
+func (it *ArtIterator) seek(key Key, reverse bool) ([]int, []artNode) {
+	curr := it.tree.root
+	if curr == nullArtNode {
+		return nil, nil
+	}
+	depth := uint32(0)
+	idxes := make([]int, 0, 4)
+	nodes := make([]artNode, 0, 4)
+	for {
+		if curr.isLeaf() {
+			break
+		}
+
+		node := curr.node(&it.tree.allocator)
+		if node.prefixLen > 0 {
+			prefixLen := node.match(key, depth)
+			if prefixLen < uint32(node.prefixLen) {
+				diffIdx := prefixLen + 1
+				less := len(key) < int(depth+diffIdx) || key[depth+diffIdx] < node.prefix[diffIdx]
+				if less {
+					if reverse {
+						idxes = append(idxes, int(node.nodeNum-1))
+						nodes = append(nodes, curr)
+					}
+				} else {
+					if !reverse {
+						idxes = append(idxes, -1)
+						nodes = append(nodes, curr)
+					}
+				}
+				return idxes, nodes
+			}
+			depth += uint32(node.prefixLen)
+		}
+
+		char := key.charAt(int(depth))
+		next := curr.findChild(&it.tree.allocator, char, key.valid(int(depth)))
+		nodes = append(nodes, curr)
+		if curr.addr == nullAddr {
+			var near int
+			switch curr.kind {
+			case typeNode4:
+
+			case typeNode16:
+			case typeNode48:
+				n48 := curr.node48(&it.tree.allocator)
+				if reverse {
+					near = n48.prevPresentIdx(int(char))
+				} else {
+					near = n48.nextPresentIdx(int(char))
+				}
+			case typeNode256:
+				n256 := curr.node256(&it.tree.allocator)
+				if reverse {
+					near = n256.prevPresentIdx(int(char))
+				} else {
+					near = n256.nextPresentIdx(int(char))
+				}
+			}
+			idxes = append(idxes, near)
+			return idxes, nodes
+		}
+		idxes = append(idxes, int(char))
+		curr = next
+		depth++
+	}
+	return idxes, nodes
+}
+
 func (it *ArtIterator) Next() error {
 	if len(it.nodes) == 0 {
 		// iterate is finished
 		return errors.New("Art: iterator is finished")
 	}
 	depth := len(it.nodes) - 1
-	if depth == 1 {
-		a := 1
-		_ = a
-	}
 	curr := it.nodes[depth]
 	idx := it.idxes[depth]
 	switch curr.kind {
@@ -121,7 +189,7 @@ func (it *ArtIterator) Next() error {
 			idx = 0 // mark in-place leaf is visited
 			it.idxes[depth] = idx
 			if n4.inplaceLeaf.addr != nullAddr {
-				it.currLeaf = it.tree.allocator.getLeaf(n4.inplaceLeaf.addr)
+				it.setCurrLeaf(n4.inplaceLeaf.addr)
 				return nil
 			}
 		}
@@ -129,7 +197,7 @@ func (it *ArtIterator) Next() error {
 			if n4.children[idx].addr != nullAddr {
 				it.idxes[depth] = idx + 1
 				if n4.children[idx].kind == typeLeaf {
-					it.currLeaf = it.tree.allocator.getLeaf(n4.children[idx].addr)
+					it.setCurrLeaf(n4.children[idx].addr)
 					return nil
 				}
 				it.nodes = append(it.nodes, n4.children[idx])
@@ -143,7 +211,7 @@ func (it *ArtIterator) Next() error {
 			idx = 0 // mark in-place leaf is visited
 			it.idxes[depth] = idx
 			if n16.inplaceLeaf.addr != nullAddr {
-				it.currLeaf = it.tree.allocator.getLeaf(n16.inplaceLeaf.addr)
+				it.setCurrLeaf(n16.inplaceLeaf.addr)
 				return nil
 			}
 		}
@@ -151,7 +219,7 @@ func (it *ArtIterator) Next() error {
 			if n16.children[idx].addr != nullAddr {
 				it.idxes[depth] = idx + 1
 				if n16.children[idx].kind == typeLeaf {
-					it.currLeaf = it.tree.allocator.getLeaf(n16.children[idx].addr)
+					it.setCurrLeaf(n16.children[idx].addr)
 					return nil
 				}
 				it.nodes = append(it.nodes, n16.children[idx])
@@ -165,7 +233,7 @@ func (it *ArtIterator) Next() error {
 			idx = 0 // mark in-place leaf is visited
 			it.idxes[depth] = idx
 			if n48.inplaceLeaf.addr != nullAddr {
-				it.currLeaf = it.tree.allocator.getLeaf(n48.inplaceLeaf.addr)
+				it.setCurrLeaf(n48.inplaceLeaf.addr)
 				return nil
 			}
 		} else if idx == 256 {
@@ -176,7 +244,7 @@ func (it *ArtIterator) Next() error {
 			it.idxes[depth] = idx + 1
 			child := n48.children[n48.keys[idx]]
 			if child.kind == typeLeaf {
-				it.currLeaf = it.tree.allocator.getLeaf(child.addr)
+				it.setCurrLeaf(child.addr)
 				return nil
 			}
 			it.nodes = append(it.nodes, child)
@@ -189,7 +257,7 @@ func (it *ArtIterator) Next() error {
 			idx = 0 // mark in-place leaf is visited
 			it.idxes[depth] = idx
 			if n256.inplaceLeaf.addr != nullAddr {
-				it.currLeaf = it.tree.allocator.getLeaf(n256.inplaceLeaf.addr)
+				it.setCurrLeaf(n256.inplaceLeaf.addr)
 				return nil
 			}
 		} else if idx == 256 {
@@ -200,7 +268,7 @@ func (it *ArtIterator) Next() error {
 			it.idxes[depth] = idx + 1
 			child := n256.children[idx]
 			if child.kind == typeLeaf {
-				it.currLeaf = it.tree.allocator.getLeaf(child.addr)
+				it.setCurrLeaf(child.addr)
 				return nil
 			}
 			it.nodes = append(it.nodes, child)
@@ -214,6 +282,11 @@ func (it *ArtIterator) Next() error {
 		return nil
 	}
 	return it.Next()
+}
+
+func (it *ArtIterator) setCurrLeaf(node nodeAddr) {
+	it.currAddr = node
+	it.currLeaf = it.tree.allocator.getLeaf(node)
 }
 
 func (it *ArtIterator) Close() {
@@ -230,7 +303,11 @@ type ArtMemKeyHandle struct {
 
 func (it *ArtIterator) Handle() ArtMemKeyHandle {
 	return ArtMemKeyHandle{
-		idx: uint16(it.currLeaf.vAddr.idx),
-		off: it.currLeaf.vAddr.off,
+		idx: uint16(it.currAddr.idx),
+		off: it.currAddr.off,
 	}
+}
+
+func (h ArtMemKeyHandle) toAddr() nodeAddr {
+	return nodeAddr{idx: uint32(h.idx), off: h.off}
 }

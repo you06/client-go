@@ -140,6 +140,20 @@ func (n4 *node4) init() {
 	n4.present = 0
 }
 
+func (n4 *node4) nextPresentIdx(start int) int {
+	mask := math.MaxUint8 - (uint8(1) << start) + 1 // e.g. offset=3 => 0b11111000
+	present := n4.present & mask
+	present |= 0xf0
+	return bits.TrailingZeros8(present)
+}
+
+func (n4 *node4) prevPresentIdx(start int) int {
+	mask := uint8(1<<(start+1) - 1) // e.g. start=3 => 0b000...0001111
+	present := n4.present & mask
+	zeros := bits.LeadingZeros8(present)
+	return 8 - zeros - 1
+}
+
 func (n16 *node16) init() {
 	// initialize basic node
 	n16.nodeNum = 0
@@ -147,6 +161,19 @@ func (n16 *node16) init() {
 	n16.inplaceLeaf = nullArtNode
 	// initialize node16
 	n16.present = 0
+}
+
+func (n16 *node16) nextPresentIdx(start int) int {
+	mask := math.MaxUint16 - (uint16(1) << start) + 1 // e.g. offset=3 => 0b111...111000
+	present := n16.present & mask
+	return bits.TrailingZeros16(present)
+}
+
+func (n16 *node16) prevPresentIdx(start int) int {
+	mask := uint16(1<<(start+1) - 1) // e.g. start=3 => 0b000...0001111
+	present := n16.present & mask
+	zeros := bits.LeadingZeros16(present)
+	return 16 - zeros - 1
 }
 
 func (n48 *node48) init() {
@@ -168,7 +195,7 @@ func (n48 *node48) nextPresentIdx(start int) int {
 		present := n48.present[presentOffset]
 		offset := start % n48m
 		start = 0
-		mask := math.MaxUint64 - (uint64(1) << offset) + 1 // 0b111...111000
+		mask := math.MaxUint64 - (uint64(1) << offset) + 1 // e.g. offset=3 => 0b111...111000
 		curr := present & mask
 		zeros := bits.TrailingZeros64(curr)
 		if zeros < n48m {
@@ -176,6 +203,21 @@ func (n48 *node48) nextPresentIdx(start int) int {
 		}
 	}
 	return 256
+}
+
+func (n48 *node48) prevPresentIdx(start int) int {
+	for presentOffset := start >> n48s; presentOffset >= 0; presentOffset-- {
+		present := n48.present[presentOffset]
+		offset := start % n48m
+		start = n48m - 1
+		mask := uint64(1)<<(offset+1) - 1 // e.g. offset=3 => 0b000...0001111
+		curr := present & mask
+		zeros := bits.LeadingZeros64(curr)
+		if zeros < n48m {
+			return presentOffset*n48m + n48m - (zeros + 1)
+		}
+	}
+	return -1
 }
 
 func (n256 *node256) init() {
@@ -189,6 +231,15 @@ func (n256 *node256) init() {
 
 func (n256 *node256) nextPresentIdx(start int) int {
 	for ; start < node256cap; start++ {
+		if !n256.children[start].addr.isNull() {
+			return start
+		}
+	}
+	return start
+}
+
+func (n256 *node256) prevPresentIdx(start int) int {
+	for ; start > -1; start-- {
 		if !n256.children[start].addr.isNull() {
 			return start
 		}

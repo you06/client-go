@@ -232,36 +232,73 @@ func TestOrderChild(t *testing.T) {
 	require.Equal(t, n256.children[255].addr, leaf255)
 }
 
-func TestN256NextPresentIdx(t *testing.T) {
+func TestN4NextPrevPresentIdx(t *testing.T) {
 	var allocator artAllocator
 	allocator.init()
 
-	{
-		_, n256 := allocator.allocNode256()
-		for i := 0; i < 256; i++ {
-			nextIdx := n256.nextPresentIdx(i)
-			require.Equal(t, node256cap, nextIdx, i)
-		}
+	n4Addr, n4 := allocator.allocNode4()
+	for i := 0; i < 16; i++ {
+		nextIdx := n4.nextPresentIdx(i)
+		require.Equal(t, 4, nextIdx, i)
+		prevIdx := n4.prevPresentIdx(i)
+		require.Equal(t, -1, prevIdx, i)
 	}
 
-	for k := 0; k < 256; k++ {
-		n256Addr, n256 := allocator.allocNode48()
+	an := artNode{kind: typeNode4, addr: n4Addr}
+	for i := 0; i < 4; i++ {
 		n4Addr, _ := allocator.allocNode4()
-		an := artNode{kind: typeNode48, addr: n256Addr}
-		an.addChild(&allocator, byte(k), false, artNode{kind: typeNode4, addr: n4Addr})
-		for i := 0; i < 256; i++ {
-			nextIdx := n256.nextPresentIdx(i)
-			if i <= k {
-				require.Equal(t, k, nextIdx, i)
+		an.addChild(&allocator, byte(i), false, artNode{kind: typeNode4, addr: n4Addr})
+		for j := 0; j < 4; j++ {
+			nextIdx := n4.nextPresentIdx(j)
+			if j <= i {
+				require.Equal(t, j, nextIdx, j)
 			} else {
-				require.Equal(t, node256cap, nextIdx, i)
+				require.Equal(t, 4, nextIdx, j)
+			}
+			prevIdx := n4.prevPresentIdx(j)
+			if j >= i {
+				require.Equal(t, i, prevIdx, j)
+			} else {
+				require.Equal(t, j, prevIdx, j)
 			}
 		}
 	}
-
 }
 
-func TestN48NextPresentIdx(t *testing.T) {
+func TestN16NextPrevPresentIdx(t *testing.T) {
+	var allocator artAllocator
+	allocator.init()
+
+	n16Addr, n16 := allocator.allocNode16()
+	for i := 0; i < 16; i++ {
+		nextIdx := n16.nextPresentIdx(i)
+		require.Equal(t, 16, nextIdx, i)
+		prevIdx := n16.prevPresentIdx(i)
+		require.Equal(t, -1, prevIdx, i)
+	}
+
+	an := artNode{kind: typeNode16, addr: n16Addr}
+	for i := 0; i < 16; i++ {
+		n4Addr, _ := allocator.allocNode4()
+		an.addChild(&allocator, byte(i), false, artNode{kind: typeNode4, addr: n4Addr})
+		for j := 0; j < 16; j++ {
+			nextIdx := n16.nextPresentIdx(j)
+			if j <= i {
+				require.Equal(t, j, nextIdx, j)
+			} else {
+				require.Equal(t, 16, nextIdx, j)
+			}
+			prevIdx := n16.prevPresentIdx(j)
+			if j >= i {
+				require.Equal(t, i, prevIdx, j)
+			} else {
+				require.Equal(t, j, prevIdx, j)
+			}
+		}
+	}
+}
+
+func TestN48NextPrevPresentIdx(t *testing.T) {
 	var allocator artAllocator
 	allocator.init()
 
@@ -270,6 +307,8 @@ func TestN48NextPresentIdx(t *testing.T) {
 		for i := 0; i < 256; i++ {
 			nextIdx := n48.nextPresentIdx(i)
 			require.Equal(t, node256cap, nextIdx, i)
+			prevIdx := n48.prevPresentIdx(i)
+			require.Equal(t, -1, prevIdx, i)
 		}
 	}
 
@@ -284,6 +323,48 @@ func TestN48NextPresentIdx(t *testing.T) {
 				require.Equal(t, k, nextIdx, i)
 			} else {
 				require.Equal(t, node256cap, nextIdx, i)
+			}
+			prevIdx := n48.prevPresentIdx(i)
+			if i >= k {
+				require.Equal(t, k, prevIdx, i)
+			} else {
+				require.Equal(t, -1, prevIdx, i)
+			}
+		}
+	}
+}
+
+func TestN256NextPrevPresentIdx(t *testing.T) {
+	var allocator artAllocator
+	allocator.init()
+
+	{
+		_, n256 := allocator.allocNode256()
+		for i := 0; i < 256; i++ {
+			nextIdx := n256.nextPresentIdx(i)
+			require.Equal(t, node256cap, nextIdx, i)
+			prevIdx := n256.prevPresentIdx(i)
+			require.Equal(t, -1, prevIdx, i)
+		}
+	}
+
+	for k := 0; k < 256; k++ {
+		n256Addr, n256 := allocator.allocNode256()
+		n4Addr, _ := allocator.allocNode4()
+		an := artNode{kind: typeNode256, addr: n256Addr}
+		an.addChild(&allocator, byte(k), false, artNode{kind: typeNode4, addr: n4Addr})
+		for i := 0; i < 256; i++ {
+			nextIdx := n256.nextPresentIdx(i)
+			if i <= k {
+				require.Equal(t, k, nextIdx, i)
+			} else {
+				require.Equal(t, node256cap, nextIdx, i)
+			}
+			prevIdx := n256.prevPresentIdx(i)
+			if i >= k {
+				require.Equal(t, k, prevIdx, i)
+			} else {
+				require.Equal(t, -1, prevIdx, i)
 			}
 		}
 	}

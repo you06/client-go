@@ -89,8 +89,6 @@ func (a *ArenaArt) Dirty() bool {
 	return !a.Art.Empty()
 }
 
-func (a *ArenaArt) SetMemoryFootprintChangeHook(hook func(uint64)) {}
-
 func (a *ArenaArt) Staging() int { return 0 }
 func (a *ArenaArt) Release(int)  {}
 func (a *ArenaArt) Cleanup(int)  {}
@@ -123,7 +121,7 @@ func (a *ArenaArt) FlushWait() error {
 	return nil
 }
 
-// GetFlushDetails returns the metrics related to flushing
+// GetFlushMetrics returns the metrics related to flushing
 func (a *ArenaArt) GetFlushMetrics() FlushMetrics {
 	return FlushMetrics{}
 }

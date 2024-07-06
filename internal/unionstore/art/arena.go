@@ -3,6 +3,7 @@ package art
 import (
 	"encoding/binary"
 	"math"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/tikv/client-go/v2/internal/logutil"
@@ -62,6 +63,8 @@ type memArena struct {
 	blocks    []memArenaBlock
 	// the total size of all blocks, also the approximate memory footprint of the arena.
 	capacity uint64
+	// when it enlarges or shrinks, call this function with the current memory footprint (in bytes)
+	memChangeHook atomic.Pointer[func()]
 }
 
 // fixedSizeArena is a fixed size arena allocator.
@@ -86,8 +89,6 @@ type leafArena struct {
 type artAllocator struct {
 	vlogAllocator vlogArena
 	nodeAllocator nodeArena
-	// the total size of all blocks, also the approximate memory footprint of the arena.
-	capacity uint64
 }
 
 func (allocator *artAllocator) init() {
@@ -241,18 +242,21 @@ func (a *memArena) alloc(size int, align bool) (nodeAddr, []byte) {
 	if size > maxBlockSize {
 		panic("alloc size is larger than max block size")
 	}
-
+	prevBlocks := len(a.blocks)
 	if len(a.blocks) == 0 {
 		a.enlarge(size, initBlockSize)
 	}
-
 	addr, data := a.allocInLastBlock(size, align)
 	if !addr.isNull() {
 		return addr, data
 	}
 
 	a.enlarge(size, a.blockSize<<1)
-	return a.allocInLastBlock(size, align)
+	addr, data = a.allocInLastBlock(size, align)
+	if prevBlocks != len(a.blocks) {
+		a.onMemChange()
+	}
+	return addr, data
 }
 
 func (a *memArena) enlarge(allocSize, blockSize int) {
@@ -279,6 +283,13 @@ func (a *memArena) allocInLastBlock(size int, align bool) (nodeAddr, []byte) {
 		return nullAddr, nil
 	}
 	return nodeAddr{uint32(idx), offset}, data
+}
+
+func (a *memArena) onMemChange() {
+	hook := a.memChangeHook.Load()
+	if hook != nil {
+		(*hook)()
+	}
 }
 
 func (a *memArena) reset() {

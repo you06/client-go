@@ -7,38 +7,43 @@ import (
 
 type ArtIterator struct {
 	tree     *Art
-	start    []byte
-	end      []byte
+	reverse  bool
+	valid    bool
 	nodes    []artNode // node stack
 	idxes    []int     // index stack
+	endIdxes []int
 	currLeaf *leaf
 	currAddr nodeAddr
-	//reverse      bool
 	//includeFlags bool
 }
 
-func (t *Art) Iter(k []byte, upperBound []byte) (*ArtIterator, error) {
+func (t *Art) Iter(lowerBound, upperBound []byte) (*ArtIterator, error) {
 	i := &ArtIterator{
-		tree:  t,
-		start: k,
-		end:   upperBound,
-		nodes: make([]artNode, 0, 4),
-		idxes: make([]int, 0, 4),
+		tree:    t,
+		reverse: false,
+		valid:   true,
+		nodes:   make([]artNode, 0, 4),
+		idxes:   make([]int, 0, 4),
 	}
-	i.init()
+	i.init(lowerBound, upperBound)
 	if err := i.Next(); err != nil {
 		return nil, err
 	}
 	return i, nil
 }
 
-func (it *ArtIterator) init() {
+func (it *ArtIterator) init(lowerBound, upperBound []byte) {
 	if it.tree.root.addr.isNull() {
+		it.valid = false
 		return
 	}
-	curr := it.tree.root
-	it.nodes = append(it.nodes, curr)
-	it.idxes = append(it.idxes, -1)
+	if it.reverse {
+		it.idxes, it.nodes = it.seek(upperBound, true)
+		it.endIdxes, _ = it.seek(lowerBound, false)
+	} else {
+		it.idxes, it.nodes = it.seek(lowerBound, false)
+		it.endIdxes, _ = it.seek(upperBound, true)
+	}
 	return
 	/*
 		for {
@@ -104,12 +109,9 @@ func (it *ArtIterator) Value() []byte {
 }
 
 // seek the first leaf node that >= key
-// if reverse, seek the last leaf node that <= key
-func (it *ArtIterator) seek(key Key, reverse bool) ([]int, []artNode) {
+// if upper, seek the last leaf node that < key
+func (it *ArtIterator) seek(key Key, upper bool) ([]int, []artNode) {
 	curr := it.tree.root
-	if curr == nullArtNode {
-		return nil, nil
-	}
 	depth := uint32(0)
 	idxes := make([]int, 0, 4)
 	nodes := make([]artNode, 0, 4)
@@ -125,12 +127,12 @@ func (it *ArtIterator) seek(key Key, reverse bool) ([]int, []artNode) {
 				diffIdx := prefixLen + 1
 				less := len(key) < int(depth+diffIdx) || key[depth+diffIdx] < node.prefix[diffIdx]
 				if less {
-					if reverse {
+					if upper {
 						idxes = append(idxes, int(node.nodeNum-1))
 						nodes = append(nodes, curr)
 					}
 				} else {
-					if !reverse {
+					if !upper {
 						idxes = append(idxes, -1)
 						nodes = append(nodes, curr)
 					}
@@ -147,19 +149,53 @@ func (it *ArtIterator) seek(key Key, reverse bool) ([]int, []artNode) {
 			var near int
 			switch curr.kind {
 			case typeNode4:
-				// n4 := curr.node4(&it.tree.allocator)
-
+				n4 := curr.node4(&it.tree.allocator)
+				var i int
+				if upper {
+					i = int(n4.nodeNum) - 1
+					for ; i >= 0; i-- {
+						if n4.keys[i] < char {
+							break
+						}
+					}
+				} else {
+					i = 0
+					for ; i < int(n4.nodeNum); i++ {
+						if n4.keys[i] >= char {
+							break
+						}
+					}
+				}
+				near = i
 			case typeNode16:
+				n16 := curr.node16(&it.tree.allocator)
+				var i int
+				if upper {
+					i = int(n16.nodeNum) - 1
+					for ; i >= 0; i-- {
+						if n16.keys[i] < char {
+							break
+						}
+					}
+				} else {
+					i = 0
+					for ; i < int(n16.nodeNum); i++ {
+						if n16.keys[i] >= char {
+							break
+						}
+					}
+				}
+				near = i
 			case typeNode48:
 				n48 := curr.node48(&it.tree.allocator)
-				if reverse {
+				if upper {
 					near = n48.prevPresentIdx(int(char))
 				} else {
 					near = n48.nextPresentIdx(int(char))
 				}
 			case typeNode256:
 				n256 := curr.node256(&it.tree.allocator)
-				if reverse {
+				if upper {
 					near = n256.prevPresentIdx(int(char))
 				} else {
 					near = n256.nextPresentIdx(int(char))
@@ -176,6 +212,13 @@ func (it *ArtIterator) seek(key Key, reverse bool) ([]int, []artNode) {
 }
 
 func (it *ArtIterator) Next() error {
+	if it.reverse {
+		return it.prev(true)
+	}
+	return it.next(true)
+}
+
+func (it *ArtIterator) next(last bool) error {
 	if len(it.nodes) == 0 {
 		// iterate is finished
 		return errors.New("Art: iterator is finished")
@@ -183,6 +226,13 @@ func (it *ArtIterator) Next() error {
 	depth := len(it.nodes) - 1
 	curr := it.nodes[depth]
 	idx := it.idxes[depth]
+	if last {
+		if depth >= len(it.endIdxes) {
+			it.valid = false
+			return nil
+		}
+		last = idx == it.endIdxes[depth]
+	}
 	switch curr.kind {
 	case typeNode4:
 		n4 := it.tree.allocator.getNode4(curr.addr)
@@ -203,7 +253,7 @@ func (it *ArtIterator) Next() error {
 				}
 				it.nodes = append(it.nodes, n4.children[idx])
 				it.idxes = append(it.idxes, -1)
-				return it.Next()
+				return it.next(last)
 			}
 		}
 	case typeNode16:
@@ -225,7 +275,7 @@ func (it *ArtIterator) Next() error {
 				}
 				it.nodes = append(it.nodes, n16.children[idx])
 				it.idxes = append(it.idxes, -1)
-				return it.Next()
+				return it.next(last)
 			}
 		}
 	case typeNode48:
@@ -250,7 +300,7 @@ func (it *ArtIterator) Next() error {
 			}
 			it.nodes = append(it.nodes, child)
 			it.idxes = append(it.idxes, -1)
-			return it.Next()
+			return it.next(last)
 		}
 	case typeNode256:
 		n256 := it.tree.allocator.getNode256(curr.addr)
@@ -274,7 +324,7 @@ func (it *ArtIterator) Next() error {
 			}
 			it.nodes = append(it.nodes, child)
 			it.idxes = append(it.idxes, -1)
-			return it.Next()
+			return it.next(last)
 		}
 	}
 	it.nodes = it.nodes[:depth]
@@ -282,7 +332,11 @@ func (it *ArtIterator) Next() error {
 	if depth == 0 {
 		return nil
 	}
-	return it.Next()
+	return it.next(last)
+}
+
+func (it *ArtIterator) prev(last bool) error {
+	return nil
 }
 
 func (it *ArtIterator) setCurrLeaf(node nodeAddr) {

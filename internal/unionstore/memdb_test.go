@@ -868,3 +868,19 @@ func TestUnsetTemporaryFlag(t *testing.T) {
 	require.Nil(err)
 	require.False(flags.HasNeedConstraintCheckInPrewrite())
 }
+
+func TestMemDBIterBound(t *testing.T) {
+	assert := assert.New(t)
+	buffer := newMemDB()
+	for i := 10; i <= 100; i++ {
+		assert.Nil(buffer.set([]byte{byte(i)}, []byte{byte(i)}))
+	}
+	it, err := buffer.IterReverse([]byte{100}, []byte{10})
+	assert.Nil(err)
+	for i := 99; i >= 10; i-- {
+		assert.True(it.Valid(), i)
+		assert.Equal(it.Key(), []byte{byte(i)})
+		assert.Equal(it.Value(), []byte{byte(i)})
+		assert.Nil(it.Next())
+	}
+}

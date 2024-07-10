@@ -147,6 +147,7 @@ func (it *ArtIterator) seek(key Key, reverse bool) ([]int, []artNode) {
 			var near int
 			switch curr.kind {
 			case typeNode4:
+				// n4 := curr.node4(&it.tree.allocator)
 
 			case typeNode16:
 			case typeNode48:

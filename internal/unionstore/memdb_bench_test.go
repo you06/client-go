@@ -602,9 +602,12 @@ func benchIterator(b *testing.B, buffer iMemDB) {
 		if err != nil {
 			b.Error(err)
 		}
+		cnt := 0
 		for iter.Valid() {
+			cnt++
 			iter.Next()
 		}
+		assert.Equal(b, cnt, opCnt)
 		iter.Close()
 	}
 }

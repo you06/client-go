@@ -131,6 +131,22 @@ func (n *artNode) node(a *artAllocator) *node {
 	}
 }
 
+func (n *artNode) at(a *artAllocator, idx int) artNode {
+	switch n.kind {
+	case typeNode4:
+		return n.node4(a).children[idx]
+	case typeNode16:
+		return n.node16(a).children[idx]
+	case typeNode48:
+		n48 := n.node48(a)
+		return n48.children[n48.keys[idx]]
+	case typeNode256:
+		return n.node256(a).children[idx]
+	default:
+		panic("invalid node kind")
+	}
+}
+
 func (n4 *node4) init() {
 	// initialize basic node
 	n4.nodeNum = 0
@@ -327,7 +343,8 @@ func (an artNode) matchDeep(a *artAllocator, key Key, depth uint32) uint32 /* mi
 		return mismatchIdx
 	}
 
-	leaf := an.minimum(a)
+	leafArtNode := minimum(a, an)
+	leaf := leafArtNode.leaf(a)
 	lKey := leaf.getKey()
 	limit := min(uint32(len(lKey)), uint32(len(key))) - depth
 	for ; mismatchIdx < limit; mismatchIdx++ {
@@ -338,29 +355,31 @@ func (an artNode) matchDeep(a *artAllocator, key Key, depth uint32) uint32 /* mi
 	return mismatchIdx
 }
 
-// Find the minimum leaf under a artNode
-func (an artNode) minimum(a *artAllocator) *leaf {
+// Find the minimum leaf under an artNode
+func minimum(a *artAllocator, an artNode) artNode {
 	switch an.kind {
 	case typeLeaf:
-		return an.leaf(a)
+		return an
 	case typeNode4:
 		n4 := an.node4(a)
 		if n4.inplaceLeaf.addr.isNull() {
-			return n4.inplaceLeaf.minimum(a)
-		} else if n4.children[0].addr.isNull() {
-			return n4.children[0].minimum(a)
+			return minimum(a, n4.inplaceLeaf)
+		}
+		if n4.children[0].addr.isNull() {
+			return minimum(a, n4.children[0])
 		}
 	case typeNode16:
 		n16 := an.node16(a)
 		if n16.inplaceLeaf.addr.isNull() {
-			return n16.inplaceLeaf.minimum(a)
-		} else if n16.children[0].addr.isNull() {
-			return n16.children[0].minimum(a)
+			return minimum(a, n16.inplaceLeaf)
+		}
+		if n16.children[0].addr.isNull() {
+			return minimum(a, n16.children[0])
 		}
 	case typeNode48:
 		n48 := an.node48(a)
 		if n48.inplaceLeaf.addr.isNull() {
-			return n48.inplaceLeaf.minimum(a)
+			return minimum(a, n48.inplaceLeaf)
 		}
 
 		idx := uint8(0)
@@ -368,19 +387,63 @@ func (an artNode) minimum(a *artAllocator) *leaf {
 			idx++
 		}
 		if !n48.children[n48.keys[idx]].addr.isNull() {
-			return n48.children[n48.keys[idx]].minimum(a)
+			return minimum(a, n48.children[n48.keys[idx]])
 		}
 	case typeNode256:
 		n256 := an.node256(a)
 		if n256.inplaceLeaf.addr.isNull() {
-			return n256.inplaceLeaf.minimum(a)
+			return minimum(a, n256.inplaceLeaf)
 		} else {
 			for idx := 0; !n256.children[idx].addr.isNull(); idx++ {
-				return n256.children[idx].minimum(a)
+				return minimum(a, n256.children[idx])
 			}
 		}
 	}
-	return nil
+	return nullArtNode
+}
+
+// Find the minimum leaf under an artNode
+func maximum(a *artAllocator, an artNode) artNode {
+	switch an.kind {
+	case typeLeaf:
+		return an
+	case typeNode4:
+		n4 := an.node4(a)
+		if n4.nodeNum > 0 {
+			return maximum(a, n4.children[n4.nodeNum-1])
+		}
+		if n4.inplaceLeaf.addr.isNull() {
+			return maximum(a, n4.inplaceLeaf)
+		}
+	case typeNode16:
+		n16 := an.node16(a)
+		if n16.nodeNum > 0 {
+			return maximum(a, n16.children[n16.nodeNum-1])
+		}
+		if n16.inplaceLeaf.addr.isNull() {
+			return maximum(a, n16.inplaceLeaf)
+		}
+	case typeNode48:
+		n48 := an.node48(a)
+
+		idx := n48.prevPresentIdx(node256cap - 1)
+		if idx >= 0 {
+			return maximum(a, n48.children[n48.keys[idx]])
+		}
+		if n48.inplaceLeaf.addr.isNull() {
+			return maximum(a, n48.inplaceLeaf)
+		}
+	case typeNode256:
+		n256 := an.node256(a)
+		idx := n256.prevPresentIdx(node256cap - 1)
+		if idx >= 0 {
+			return maximum(a, n256.children[idx])
+		}
+		if n256.inplaceLeaf.addr.isNull() {
+			return maximum(a, n256.inplaceLeaf)
+		}
+	}
+	return nullArtNode
 }
 
 func (an artNode) findChild(a *artAllocator, c byte, valid bool) artNode {

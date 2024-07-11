@@ -158,7 +158,8 @@ func (t *Art) recursiveInsert(key Key) (nodeAddr, *leaf) {
 				newArtNode.addChild(&t.allocator, nodeKey, false, current)
 			} else {
 				node.prefixLen -= uint8(mismatchIdx + 1)
-				leaf := current.minimum(&t.allocator)
+				leafArtNode := minimum(&t.allocator, current)
+				leaf := leafArtNode.leaf(&t.allocator)
 				leafKey := leaf.getKey()
 				newArtNode.addChild(&t.allocator, leafKey.charAt(int(depth+mismatchIdx)), !leafKey.valid(int(depth)), current)
 			}

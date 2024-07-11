@@ -27,7 +27,7 @@ func TestNodeSize(t *testing.T) {
 	require.Equal(t, int(unsafe.Sizeof(nLeaf)), leafSize)
 }
 
-func checkNodeInitilization(t *testing.T, n any) {
+func checkNodeInitialization(t *testing.T, n any) {
 	var node *node
 	switch n := n.(type) {
 	case *node4:
@@ -63,7 +63,7 @@ func TestAllocNode(t *testing.T) {
 		addr, n4 := allocator.allocNode4()
 		require.False(t, addr.isNull())
 		require.NotNil(t, n4)
-		checkNodeInitilization(t, n4)
+		checkNodeInitialization(t, n4)
 		n4.nodeNum = uint8(i % 4)
 		n4s = append(n4s, addr)
 	}
@@ -78,7 +78,7 @@ func TestAllocNode(t *testing.T) {
 		addr, n16 := allocator.allocNode16()
 		require.False(t, addr.isNull())
 		require.NotNil(t, n16)
-		checkNodeInitilization(t, n16)
+		checkNodeInitialization(t, n16)
 		n16.nodeNum = uint8(i % 16)
 		n16s = append(n16s, addr)
 	}
@@ -93,7 +93,7 @@ func TestAllocNode(t *testing.T) {
 		addr, n48 := allocator.allocNode48()
 		require.False(t, addr.isNull())
 		require.NotNil(t, n48)
-		checkNodeInitilization(t, n48)
+		checkNodeInitialization(t, n48)
 		n48.nodeNum = uint8(i % 48)
 		n48s = append(n48s, addr)
 	}
@@ -108,7 +108,7 @@ func TestAllocNode(t *testing.T) {
 		addr, n256 := allocator.allocNode256()
 		require.False(t, addr.isNull())
 		require.NotNil(t, n256)
-		checkNodeInitilization(t, n256)
+		checkNodeInitialization(t, n256)
 		n256.nodeNum = uint8(i % 256)
 		n256s = append(n256s, addr)
 	}
@@ -237,7 +237,7 @@ func TestN4NextPrevPresentIdx(t *testing.T) {
 	allocator.init()
 
 	n4Addr, n4 := allocator.allocNode4()
-	for i := 0; i < 16; i++ {
+	for i := 0; i < node256cap; i++ {
 		nextIdx := n4.nextPresentIdx(i)
 		require.Equal(t, 4, nextIdx, i)
 		prevIdx := n4.prevPresentIdx(i)
@@ -248,7 +248,7 @@ func TestN4NextPrevPresentIdx(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		n4Addr, _ := allocator.allocNode4()
 		an.addChild(&allocator, byte(i), false, artNode{kind: typeNode4, addr: n4Addr})
-		for j := 0; j < 4; j++ {
+		for j := 0; j < node256cap; j++ {
 			nextIdx := n4.nextPresentIdx(j)
 			if j <= i {
 				require.Equal(t, j, nextIdx, j)
@@ -270,7 +270,7 @@ func TestN16NextPrevPresentIdx(t *testing.T) {
 	allocator.init()
 
 	n16Addr, n16 := allocator.allocNode16()
-	for i := 0; i < 16; i++ {
+	for i := 0; i < node256cap; i++ {
 		nextIdx := n16.nextPresentIdx(i)
 		require.Equal(t, 16, nextIdx, i)
 		prevIdx := n16.prevPresentIdx(i)
@@ -278,7 +278,7 @@ func TestN16NextPrevPresentIdx(t *testing.T) {
 	}
 
 	an := artNode{kind: typeNode16, addr: n16Addr}
-	for i := 0; i < 16; i++ {
+	for i := 0; i < node256cap; i++ {
 		n4Addr, _ := allocator.allocNode4()
 		an.addChild(&allocator, byte(i), false, artNode{kind: typeNode4, addr: n4Addr})
 		for j := 0; j < 16; j++ {
@@ -304,7 +304,7 @@ func TestN48NextPrevPresentIdx(t *testing.T) {
 
 	{
 		_, n48 := allocator.allocNode48()
-		for i := 0; i < 256; i++ {
+		for i := 0; i < node256cap; i++ {
 			nextIdx := n48.nextPresentIdx(i)
 			require.Equal(t, node256cap, nextIdx, i)
 			prevIdx := n48.prevPresentIdx(i)
@@ -312,7 +312,7 @@ func TestN48NextPrevPresentIdx(t *testing.T) {
 		}
 	}
 
-	for k := 0; k < 256; k++ {
+	for k := 0; k < node256cap; k++ {
 		n48Addr, n48 := allocator.allocNode48()
 		n4Addr, _ := allocator.allocNode4()
 		an := artNode{kind: typeNode48, addr: n48Addr}

@@ -450,6 +450,7 @@ func (c *twoPhaseCommitter) resolveFlushedLocks(bo *retry.Backoffer, start, end 
 	if commit {
 		status = "commit"
 	}
+<<<<<<< Updated upstream
 
 	runner := rangetask.NewRangeTaskRunnerWithID(
 		fmt.Sprintf("pipelined-dml-%s", status),
@@ -460,9 +461,14 @@ func (c *twoPhaseCommitter) resolveFlushedLocks(bo *retry.Backoffer, start, end 
 	)
 	runner.SetStatLogInterval(30 * time.Second)
 
+=======
+	startTS := c.startTS
+	runner := rangetask.NewRangeTaskRunner("pipelined-dml-"+status, c.store, RESOLVE_CONCURRENCY, handler)
+>>>>>>> Stashed changes
 	go func() {
 		if err = runner.RunOnRange(bo.GetCtx(), start, end); err != nil {
 			logutil.Logger(bo.GetCtx()).Error("[pipelined dml] resolve flushed locks failed",
+				zap.Uint64("txnStartTS", startTS),
 				zap.String("txn-status", status),
 				zap.Uint64("resolved regions", resolved.Load()),
 				zap.Uint64("startTS", c.startTS),
@@ -471,7 +477,12 @@ func (c *twoPhaseCommitter) resolveFlushedLocks(bo *retry.Backoffer, start, end 
 				zap.Error(err),
 			)
 		} else {
+<<<<<<< Updated upstream
 			logutil.Logger(bo.GetCtx()).Info("[pipelined dml] resolve flushed locks done",
+=======
+			logutil.BgLogger().Info("[pipelined dml] resolve flushed locks done",
+				zap.Uint64("txnStartTS", startTS),
+>>>>>>> Stashed changes
 				zap.String("txn-status", status),
 				zap.Uint64("resolved regions", resolved.Load()),
 				zap.Uint64("startTS", c.startTS),

@@ -61,8 +61,12 @@ func (a *ArenaArt) Iter(start []byte, end []byte) (Iterator, error) {
 }
 
 // IterReverse implements the Retriever interface.
-func (a *ArenaArt) IterReverse([]byte, []byte) (Iterator, error) {
-	panic("not supported")
+func (a *ArenaArt) IterReverse(end []byte, start []byte) (Iterator, error) {
+	it, err := a.Art.IterReverse(end, start)
+	if err != nil {
+		return nil, err
+	}
+	return it, err
 }
 
 // SnapshotIter returns an Iterator for a snapshot of MemBuffer.

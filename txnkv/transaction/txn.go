@@ -136,10 +136,27 @@ type KVTxn struct {
 	// commitCallback is called after current transaction gets committed
 	commitCallback func(info string, err error)
 
-	isPessimistic     bool
-	enableAsyncCommit bool
-	enable1PC         bool
-	*commitActionContext
+	binlog                  BinlogExecutor
+	schemaLeaseChecker      SchemaLeaseChecker
+	syncLog                 bool
+	priority                txnutil.Priority
+	isPessimistic           bool
+	enableAsyncCommit       bool
+	enable1PC               bool
+	causalConsistency       bool
+	scope                   string
+	kvFilter                KVFilter
+	resourceGroupTag        []byte
+	resourceGroupTagger     tikvrpc.ResourceGroupTagger // use this when resourceGroupTag is nil
+	diskFullOpt             kvrpcpb.DiskFullOpt
+	txnSource               uint64
+	commitTSUpperBoundCheck func(uint64) bool
+	// interceptor is used to decorate the RPC request logic related to the txn.
+	interceptor    interceptor.RPCInterceptor
+	assertionLevel kvrpcpb.AssertionLevel
+	*util.RequestSource
+	// resourceGroupName is the name of tenant resource group.
+	resourceGroupName string
 
 	aggressiveLockingContext *aggressiveLockingContext
 	aggressiveLockingDirty   atomic.Bool
@@ -164,11 +181,12 @@ func NewTiKVTxn(store kvstore, snapshot *txnsnapshot.KVSnapshot, startTS uint64,
 		startTime:         time.Now(),
 		valid:             true,
 		vars:              tikv.DefaultVars,
+		scope:             options.TxnScope,
 		enableAsyncCommit: cfg.EnableAsyncCommit,
 		enable1PC:         cfg.Enable1PC,
+		diskFullOpt:       kvrpcpb.DiskFullOpt_NotAllowedOnFull,
+		RequestSource:     snapshot.RequestSource,
 	}
-	newTiKVTxn.commitActionContext = defaultCommitActionContext(newTiKVTxn)
-	newTiKVTxn.commitActionContext.setScope(options.TxnScope)
 	if !options.PipelinedMemDB {
 		newTiKVTxn.us = unionstore.NewUnionStore(unionstore.NewMemDBWithContext(), snapshot)
 		return newTiKVTxn, nil
@@ -438,7 +456,7 @@ func (txn *KVTxn) InitPipelinedMemDB() error {
 	flushedKeys, flushedSize := 0, 0
 	pipelinedMemDB := unionstore.NewPipelinedMemDB(func(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
 		return txn.snapshot.BatchGetWithTier(ctx, keys, txnsnapshot.BatchGetBufferTier)
-	}, func(generation uint64, memdb *unionstore.ArtMemDB) (err error) {
+	}, func(generation uint64, memdb *unionstore.ArenaArt) (err error) {
 		if atomic.LoadUint32((*uint32)(&txn.committer.ttlManager.state)) == uint32(stateClosed) {
 			return errors.New("ttl manager is closed")
 		}
@@ -461,33 +479,38 @@ func (txn *KVTxn) InitPipelinedMemDB() error {
 				zap.Duration("take time", time.Since(startTime)),
 			)
 		}()
-<<<<<<< Updated upstream
-
-=======
-		txn.commitActionContext.running.Store(true)
-		logutil.BgLogger().Info("[pipelined dml] flush memdb to kv store",
-			zap.Int("keys", memdb.Len()), zap.String("size", units.HumanSize(float64(memdb.Size()))),
-			zap.Int("flushed keys", flushedKeys), zap.String("flushed size", units.HumanSize(float64(flushedSize))))
->>>>>>> Stashed changes
 		// The flush function will not be called concurrently.
 		// TODO: set backoffer from upper context.
 		bo := retry.NewBackofferWithVars(flushCtx, 20000, nil)
-		//mutations := newMemBufferMutations(memdb.Len(), memdb)
-		mutations := NewPlainMutations(memdb.Len())
+		mutations := newMemBufferMutations(memdb.Len(), memdb)
 		if memdb.Len() == 0 {
 			return nil
 		}
 		// update bounds
 		{
-			startKey, endKey := memdb.Bounds()
-			if startKey != nil && len(txn.committer.pipelinedCommitInfo.pipelinedStart) == 0 || bytes.Compare(txn.committer.pipelinedCommitInfo.pipelinedStart, startKey) > 0 {
+			var it unionstore.Iterator
+			// lower bound
+			it, _ = memdb.Iter(nil, nil)
+			if !it.Valid() {
+				return errors.New("invalid iterator")
+			}
+			startKey := it.Key()
+			if len(txn.committer.pipelinedCommitInfo.pipelinedStart) == 0 || bytes.Compare(txn.committer.pipelinedCommitInfo.pipelinedStart, startKey) > 0 {
 				txn.committer.pipelinedCommitInfo.pipelinedStart = make([]byte, len(startKey))
 				copy(txn.committer.pipelinedCommitInfo.pipelinedStart, startKey)
 			}
-			if endKey != nil && len(txn.committer.pipelinedCommitInfo.pipelinedEnd) == 0 || bytes.Compare(txn.committer.pipelinedCommitInfo.pipelinedEnd, endKey) < 0 {
+			it.Close()
+			// upper bound
+			it, _ = memdb.IterReverse(nil, nil)
+			if !it.Valid() {
+				return errors.New("invalid iterator")
+			}
+			endKey := it.Key()
+			if len(txn.committer.pipelinedCommitInfo.pipelinedEnd) == 0 || bytes.Compare(txn.committer.pipelinedCommitInfo.pipelinedEnd, endKey) < 0 {
 				txn.committer.pipelinedCommitInfo.pipelinedEnd = make([]byte, len(endKey))
 				copy(txn.committer.pipelinedCommitInfo.pipelinedEnd, endKey)
 			}
+			it.Close()
 		}
 		// TODO: reuse initKeysAndMutations
 		for it := memdb.IterWithFlags(nil, nil); it.Valid(); it.Next() {

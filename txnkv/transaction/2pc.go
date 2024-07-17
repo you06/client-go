@@ -47,7 +47,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
-
+	
+	"github.com/tikv/client-go/v2/internal/unionstore/art"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
@@ -204,17 +205,17 @@ type twoPhaseCommitter struct {
 }
 
 type memBufferMutations struct {
-	storage *unionstore.MemDB
+	storage *unionstore.ArenaArt
 
 	// The format to put to the UserData of the handles:
 	// MSB									                                                                              LSB
 	// [12 bits: Op][1 bit: NeedConstraintCheckInPrewrite][1 bit: assertNotExist][1 bit: assertExist][1 bit: isPessimisticLock]
-	handles []unionstore.MemKeyHandle
+	handles []art.ArtMemKeyHandle
 }
 
-func newMemBufferMutations(sizeHint int, storage *unionstore.MemDB) *memBufferMutations {
+func newMemBufferMutations(sizeHint int, storage *unionstore.ArenaArt) *memBufferMutations {
 	return &memBufferMutations{
-		handles: make([]unionstore.MemKeyHandle, 0, sizeHint),
+		handles: make([]art.ArtMemKeyHandle, 0, sizeHint),
 		storage: storage,
 	}
 }

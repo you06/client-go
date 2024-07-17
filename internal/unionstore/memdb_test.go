@@ -37,6 +37,7 @@
 package unionstore
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"testing"
@@ -882,5 +883,24 @@ func TestMemDBIterBound(t *testing.T) {
 		assert.Equal(it.Key(), []byte{byte(i)})
 		assert.Equal(it.Value(), []byte{byte(i)})
 		assert.Nil(it.Next())
+	}
+}
+
+func TestSnapshotGet(t *testing.T) {
+	assert := assert.New(t)
+	buffer := newMemDB()
+	var getters []Getter
+	for i := 0; i < 100; i++ {
+		assert.Nil(buffer.Set([]byte{byte(0)}, []byte{byte(i)}))
+		getter := buffer.SnapshotGetter()
+		val, err := getter.Get(context.Background(), []byte{byte(0)})
+		assert.Nil(err)
+		assert.Equal(val, []byte{byte(i)})
+		getters = append(getters, getter)
+	}
+	for i, getter := range getters {
+		val, err := getter.Get(context.Background(), []byte{byte(0)})
+		assert.Nil(err)
+		assert.Equal(val, []byte{byte(i)})
 	}
 }

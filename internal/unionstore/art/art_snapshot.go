@@ -40,48 +40,45 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 )
 
+func (t *Art) getSnapshot() ARTCheckpoint {
+	if len(t.stages) > 0 {
+		return t.stages[0]
+	}
+	return t.checkpoint()
+}
+
 // SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 func (t *Art) SnapshotGetter() *memdbSnapGetter {
 	return &memdbSnapGetter{
 		db: t,
-		cp: t.checkpoint(),
+		cp: t.getSnapshot(),
 	}
 }
 
-// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
+// SnapshotIter returns an Iterator for a snapshot of MemBuffer.
 func (t *Art) SnapshotIter(start, end []byte) *memdbSnapIter {
-	it := &memdbSnapIter{
-		MemdbIterator: &MemdbIterator{
-			db:    db,
-			start: start,
-			end:   end,
-		},
-		cp: db.getSnapshot(),
+	inner, err := t.Iter(start, end)
+	if err != nil {
+		panic(err)
 	}
-	it.init()
+	it := &memdbSnapIter{
+		ArtIterator: inner,
+		cp:          t.getSnapshot(),
+	}
 	return it
 }
 
 // SnapshotIterReverse returns a reverse Iterator for a snapshot of MemBuffer.
-func (db *MemDB) SnapshotIterReverse(k, lowerBound []byte) Iterator {
+func (t *Art) SnapshotIterReverse(k, lowerBound []byte) *memdbSnapIter {
+	inner, err := t.IterReverse(k, lowerBound)
+	if err != nil {
+		panic(err)
+	}
 	it := &memdbSnapIter{
-		MemdbIterator: &MemdbIterator{
-			db:      db,
-			start:   lowerBound,
-			end:     k,
-			reverse: true,
-		},
-		cp: db.getSnapshot(),
+		ArtIterator: inner,
+		cp:          t.getSnapshot(),
 	}
-	it.init()
 	return it
-}
-
-func (db *MemDB) getSnapshot() MemDBCheckpoint {
-	if len(db.stages) > 0 {
-		return db.stages[0]
-	}
-	return db.vlog.checkpoint()
 }
 
 type memdbSnapGetter struct {
@@ -90,15 +87,15 @@ type memdbSnapGetter struct {
 }
 
 func (snap *memdbSnapGetter) Get(ctx context.Context, key []byte) ([]byte, error) {
-	x := snap.db.traverse(key, false)
-	if x.isNull() {
+	addr, lf := snap.db.search(key)
+	if addr.isNull() {
 		return nil, tikverr.ErrNotExist
 	}
-	if x.vptr.isNull() {
+	if lf.vAddr.isNull() {
 		// A flags only key, act as value not exists
 		return nil, tikverr.ErrNotExist
 	}
-	v, ok := snap.db.vlog.getSnapshotValue(x.vptr, &snap.cp)
+	v, ok := snap.db.getSnapshotValue(lf.vAddr, &snap.cp)
 	if !ok {
 		return nil, tikverr.ErrNotExist
 	}
@@ -106,9 +103,9 @@ func (snap *memdbSnapGetter) Get(ctx context.Context, key []byte) ([]byte, error
 }
 
 type memdbSnapIter struct {
-	*MemdbIterator
+	*ArtIterator
 	value []byte
-	cp    MemDBCheckpoint
+	cp    ARTCheckpoint
 }
 
 func (i *memdbSnapIter) Value() []byte {
@@ -116,46 +113,46 @@ func (i *memdbSnapIter) Value() []byte {
 }
 
 func (i *memdbSnapIter) Next() error {
-	i.value = nil
-	for i.Valid() {
-		if err := i.MemdbIterator.Next(); err != nil {
-			return err
-		}
-		if i.setValue() {
-			return nil
-		}
-	}
+	//i.value = nil
+	//for i.Valid() {
+	//	if err := i.MemdbIterator.Next(); err != nil {
+	//		return err
+	//	}
+	//	if i.setValue() {
+	//		return nil
+	//	}
+	//}
 	return nil
 }
 
 func (i *memdbSnapIter) setValue() bool {
-	if !i.Valid() {
-		return false
-	}
-	if v, ok := i.db.vlog.getSnapshotValue(i.curr.vptr, &i.cp); ok {
-		i.value = v
-		return true
-	}
+	//if !i.Valid() {
+	//	return false
+	//}
+	//if v, ok := i.db.vlog.getSnapshotValue(i.curr.vptr, &i.cp); ok {
+	//	i.value = v
+	//	return true
+	//}
 	return false
 }
 
 func (i *memdbSnapIter) init() {
-	if i.reverse {
-		if len(i.end) == 0 {
-			i.seekToLast()
-		} else {
-			i.seek(i.end)
-		}
-	} else {
-		if len(i.start) == 0 {
-			i.seekToFirst()
-		} else {
-			i.seek(i.start)
-		}
-	}
-
-	if !i.setValue() {
-		err := i.Next()
-		_ = err // memdbIterator will never fail
-	}
+	//if i.reverse {
+	//	if len(i.end) == 0 {
+	//		i.seekToLast()
+	//	} else {
+	//		i.seek(i.end)
+	//	}
+	//} else {
+	//	if len(i.start) == 0 {
+	//		i.seekToFirst()
+	//	} else {
+	//		i.seek(i.start)
+	//	}
+	//}
+	//
+	//if !i.setValue() {
+	//	err := i.Next()
+	//	_ = err // memdbIterator will never fail
+	//}
 }

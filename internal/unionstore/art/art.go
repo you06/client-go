@@ -228,7 +228,6 @@ func (t *Art) search(key Key) (nodeAddr, *leaf) {
 		}
 		depth++
 	}
-	return nullAddr, nil
 }
 
 func (t *Art) newNode4() (artNode, *node4) {
@@ -272,7 +271,11 @@ func (t *Art) trySwapValue(addr nodeAddr, value []byte) bool {
 	if addr.isNull() {
 		return false
 	}
-	if !t.canSwapValue(addr) {
+	if len(t.stages) == 0 {
+		return true
+	}
+	cp := t.stages[len(t.stages)-1]
+	if !t.canSwapValue(&cp, addr) {
 		return false
 	}
 	oldVal := t.allocator.getValue(addr)
@@ -282,11 +285,10 @@ func (t *Art) trySwapValue(addr nodeAddr, value []byte) bool {
 	return true
 }
 
-func (t *Art) canSwapValue(addr nodeAddr) bool {
-	if len(t.stages) == 0 {
+func (t *Art) canSwapValue(cp *ARTCheckpoint, addr nodeAddr) bool {
+	if cp == nil {
 		return true
 	}
-	cp := t.stages[len(t.stages)-1]
 	if int(addr.idx) >= cp.blocks {
 		return true
 	}
@@ -342,6 +344,10 @@ func (t *Art) checkpoint() ARTCheckpoint {
 		snap.offsetInBlock = t.allocator.vlogAllocator.blocks[snap.blocks-1].length
 	}
 	return snap
+}
+
+func (t *Art) Stages() []ARTCheckpoint {
+	return t.stages
 }
 
 func (t *Art) Staging() int {
@@ -513,6 +519,16 @@ func (t *Art) selectValueHistory(addr nodeAddr, predicate func(nodeAddr) bool) n
 		addr = hdr.oldValue
 	}
 	return nullAddr
+}
+
+func (t *Art) getSnapshotValue(addr nodeAddr, cp *ARTCheckpoint) ([]byte, bool) {
+	result := t.selectValueHistory(addr, func(addr nodeAddr) bool {
+		return !t.canSwapValue(cp, addr)
+	})
+	if result.isNull() {
+		return nil, false
+	}
+	return t.allocator.getValue(result), true
 }
 
 func (t *Art) SetMemoryFootprintChangeHook(fn func(uint64)) {

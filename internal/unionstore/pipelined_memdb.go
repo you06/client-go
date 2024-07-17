@@ -17,6 +17,7 @@ package unionstore
 import (
 	"context"
 	stderrors "errors"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,8 +43,8 @@ type PipelinedMemDB struct {
 	errCh                   chan error
 	flushFunc               FlushFunc
 	bufferBatchGetter       BufferBatchGetter
-	memDB                   *ArtMemDB
-	flushingMemDB           *ArtMemDB // the flushingMemDB is not wrapped by a mutex, because there is no data race in it.
+	memDB                   *ArenaArt
+	flushingMemDB           *ArenaArt // the flushingMemDB is not wrapped by a mutex, because there is no data race in it.
 	len, size               int       // len and size records the total flushed and onflushing memdb.
 	generation              uint64
 	entryLimit, bufferLimit uint64
@@ -95,12 +96,12 @@ func newFlushOption() flushOption {
 	return opt
 }
 
-type FlushFunc func(uint64, *ArtMemDB) error
+type FlushFunc func(uint64, *ArenaArt) error
 type BufferBatchGetter func(ctx context.Context, keys [][]byte) (map[string][]byte, error)
 
 func NewPipelinedMemDB(bufferBatchGetter BufferBatchGetter, flushFunc FlushFunc) *PipelinedMemDB {
-	memdb := newArtMemDB()
-	//memdb.setSkipMutex(true)
+	memdb := NewArenaArt()
+	memdb.setSkipMutex(true)
 	flushOpt := newFlushOption()
 	return &PipelinedMemDB{
 		memDB:             memdb,
@@ -109,8 +110,8 @@ func NewPipelinedMemDB(bufferBatchGetter BufferBatchGetter, flushFunc FlushFunc)
 		bufferBatchGetter: bufferBatchGetter,
 		generation:        0,
 		// keep entryLimit and bufferLimit same with the memdb's default values.
-		entryLimit:  memdb.entrySizeLimit,
-		bufferLimit: memdb.bufferSizeLimit,
+		entryLimit:  math.MaxUint64,
+		bufferLimit: math.MaxUint64,
 		flushOption: flushOpt,
 	}
 }
@@ -126,7 +127,7 @@ func (p *PipelinedMemDB) GetMemDB() *MemDB {
 }
 
 func (p *PipelinedMemDB) get(ctx context.Context, k []byte, skipRemoteBuffer bool) ([]byte, error) {
-	v, err := p.memDB.Get(k)
+	v, err := p.memDB.Get(ctx, k)
 	if err == nil {
 		return v, nil
 	}
@@ -134,7 +135,7 @@ func (p *PipelinedMemDB) get(ctx context.Context, k []byte, skipRemoteBuffer boo
 		return nil, err
 	}
 	if p.flushingMemDB != nil {
-		v, err = p.flushingMemDB.Get(k)
+		v, err = p.flushingMemDB.Get(ctx, k)
 		if err == nil {
 			return v, nil
 		}
@@ -285,7 +286,7 @@ func (p *PipelinedMemDB) Flush(force bool) (bool, error) {
 	// invalidate the batch get cache whether the flush is really triggered.
 	p.batchGetCache = nil
 
-	if len(p.memDB.stages) > 0 {
+	if len(p.memDB.stages()) > 0 {
 		return false, errors.New("there are stages unreleased when Flush is called")
 	}
 
@@ -305,7 +306,7 @@ func (p *PipelinedMemDB) Flush(force bool) (bool, error) {
 	p.flushingMemDB = p.memDB
 	p.len += p.flushingMemDB.Len()
 	p.size += p.flushingMemDB.Size()
-	p.memDB = newArtMemDB()
+	p.memDB = NewArenaArt()
 	//p.memDB.SetEntrySizeLimit(p.entryLimit, p.bufferLimit)
 	//p.memDB.setSkipMutex(true)
 	p.generation++
@@ -377,7 +378,7 @@ func (p *PipelinedMemDB) FlushWait() error {
 func (p *PipelinedMemDB) handleAlreadyExistErr(err error) error {
 	var existErr *tikverr.ErrKeyExist
 	if stderrors.As(err, &existErr) {
-		v, err2 := p.flushingMemDB.Get(existErr.GetKey())
+		v, err2 := p.flushingMemDB.Get(context.Background(), existErr.GetKey())
 		if err2 != nil {
 			// TODO: log more info like start_ts, also for other logs
 			logutil.BgLogger().Warn(

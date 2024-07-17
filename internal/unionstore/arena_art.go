@@ -20,6 +20,10 @@ func NewArenaArt() *ArenaArt {
 	}
 }
 
+func (a *ArenaArt) setSkipMutex(skip bool) {
+	// TODO test skip mutex
+}
+
 func (a *ArenaArt) Get(_ context.Context, k []byte) ([]byte, error) {
 	return a.Art.Get(k)
 }
@@ -128,4 +132,8 @@ func (a *ArenaArt) FlushWait() error {
 // GetFlushMetrics returns the metrics related to flushing
 func (a *ArenaArt) GetFlushMetrics() FlushMetrics {
 	return FlushMetrics{}
+}
+
+func (a *ArenaArt) stages() []art.ARTCheckpoint {
+	return a.Art.Stages()
 }

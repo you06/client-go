@@ -463,7 +463,6 @@ func (c *twoPhaseCommitter) resolveFlushedLocks(bo *retry.Backoffer, start, end 
 	go func() {
 		if err = runner.RunOnRange(bo.GetCtx(), start, end); err != nil {
 			logutil.Logger(bo.GetCtx()).Error("[pipelined dml] resolve flushed locks failed",
-				zap.Uint64("txnStartTS", startTS),
 				zap.String("txn-status", status),
 				zap.Uint64("resolved regions", resolved.Load()),
 				zap.Uint64("startTS", c.startTS),

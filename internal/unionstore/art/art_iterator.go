@@ -85,6 +85,15 @@ func (it *ArtIterator) Value() []byte {
 	return it.tree.getValue(it.currLeaf)
 }
 
+// HasValue returns false if it is flags only.
+func (it *ArtIterator) HasValue() bool {
+	return !it.isFlagsOnly()
+}
+
+func (it *ArtIterator) isFlagsOnly() bool {
+	return it.currLeaf != nil && it.currLeaf.vAddr.isNull()
+}
+
 // seek the first leaf node that >= key
 // return the indexes and nodes in the path
 // nodes[0] is the root node

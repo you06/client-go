@@ -47,8 +47,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
-	
-	"github.com/tikv/client-go/v2/internal/unionstore/art"
+
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
@@ -60,6 +59,7 @@ import (
 	"github.com/tikv/client-go/v2/internal/locate"
 	"github.com/tikv/client-go/v2/internal/logutil"
 	"github.com/tikv/client-go/v2/internal/unionstore"
+	"github.com/tikv/client-go/v2/internal/unionstore/art"
 	"github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/oracle"
@@ -269,7 +269,7 @@ func (m *memBufferMutations) Slice(from, to int) CommitterMutations {
 }
 
 func (m *memBufferMutations) Push(op kvrpcpb.Op, isPessimisticLock, assertExist, assertNotExist, NeedConstraintCheckInPrewrite bool,
-	handle unionstore.MemKeyHandle) {
+	handle art.ArtMemKeyHandle) {
 	// See comments of `m.handles` field about the format of the user data `aux`.
 	aux := uint16(op) << 4
 	if isPessimisticLock {
@@ -469,14 +469,16 @@ func (c *PlainMutations) AppendMutation(mutation PlainMutation) {
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *KVTxn, sessionID uint64) (*twoPhaseCommitter, error) {
 	committer := &twoPhaseCommitter{
-		store:         txn.store,
-		txn:           txn,
-		startTS:       txn.StartTS(),
-		sessionID:     sessionID,
-		regionTxnSize: map[uint64]int{},
-		isPessimistic: txn.IsPessimistic(),
+		store:             txn.store,
+		txn:               txn,
+		startTS:           txn.StartTS(),
+		sessionID:         sessionID,
+		regionTxnSize:     map[uint64]int{},
+		isPessimistic:     txn.IsPessimistic(),
+		binlog:            txn.binlog,
+		diskFullOpt:       kvrpcpb.DiskFullOpt_NotAllowedOnFull,
+		resourceGroupName: txn.resourceGroupName,
 	}
-	txn.commitActionContext.applyToCommitter(committer)
 	return committer, nil
 }
 

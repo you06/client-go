@@ -64,6 +64,14 @@ func (a *ArenaArt) Iter(start []byte, end []byte) (Iterator, error) {
 	return it, err
 }
 
+func (a *ArenaArt) IterWithFlags(start []byte, end []byte) *art.ArtIterator {
+	it, err := a.Art.Iter(start, end)
+	if err != nil {
+		panic(err)
+	}
+	return it
+}
+
 // IterReverse implements the Retriever interface.
 func (a *ArenaArt) IterReverse(end []byte, start []byte) (Iterator, error) {
 	it, err := a.Art.IterReverse(end, start)

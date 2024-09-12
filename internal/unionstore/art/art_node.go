@@ -411,31 +411,44 @@ func (an *artNode) findChild(a *artAllocator, c byte, valid bool) (int, artNode)
 	}
 	switch an.kind {
 	case typeNode4:
-		return an.findChild4(a, c)
+		n4 := an.asNode4(a)
+		idx := n4.findChild(c)
+		if idx != notExistIndex {
+			return idx, n4.children[idx]
+		}
 	case typeNode16:
-		return an.findChild16(a, c)
+		n16 := an.asNode16(a)
+		idx := n16.findChild(c)
+		if idx != notExistIndex {
+			return idx, n16.children[idx]
+		}
 	case typeNode48:
-		return an.findChild48(a, c)
+		n48 := an.asNode48(a)
+		idx := n48.findChild(c)
+		if idx != notExistIndex {
+			return idx, n48.children[idx]
+		}
 	case typeNode256:
-		return an.findChild256(a, c)
+		n256 := an.asNode256(a)
+		idx := n256.findChild(c)
+		if idx != notExistIndex {
+			return idx, n256.children[idx]
+		}
 	}
 	return notExistIndex, nullArtNode
 }
 
-func (an *artNode) findChild4(a *artAllocator, c byte) (int, artNode) {
-	n4 := an.asNode4(a)
+func (n4 *node4) findChild(c byte) int {
 	for idx := 0; idx < int(n4.nodeNum); idx++ {
 		if n4.keys[idx] == c {
-			return idx, n4.children[idx]
+			return idx
 		}
 	}
 
-	return -2, nullArtNode
+	return notExistIndex
 }
 
-func (an *artNode) findChild16(a *artAllocator, c byte) (int, artNode) {
-	n16 := an.asNode16(a)
-
+func (n16 *node16) findChild(c byte) int {
 	idx, found := sort.Find(int(n16.nodeNum), func(i int) int {
 		if n16.keys[i] < c {
 			return 1
@@ -446,62 +459,61 @@ func (an *artNode) findChild16(a *artAllocator, c byte) (int, artNode) {
 		return -1
 	})
 	if found {
-		return idx, n16.children[idx]
+		return idx
 	}
-	return -2, nullArtNode
+	return notExistIndex
 }
 
-func (an *artNode) findChild48(a *artAllocator, c byte) (int, artNode) {
-	n48 := an.asNode48(a)
+func (n48 *node48) findChild(c byte) int {
 	if n48.present[c>>n48s]&(1<<(c%n48m)) != 0 {
-		return int(c), n48.children[n48.keys[c]]
+		return int(n48.keys[c])
 	}
-	return -2, nullArtNode
+	return notExistIndex
 }
 
-func (an *artNode) findChild256(a *artAllocator, c byte) (int, artNode) {
-	n256 := an.asNode256(a)
+func (n256 *node256) findChild(c byte) int {
 	if n256.present[c>>n48s]&(1<<(c%n48m)) != 0 {
-		return int(c), n256.children[c]
+		return int(c)
 	}
-	return -2, nullArtNode
+	return notExistIndex
 }
 
-func (an *artNode) swapChild(a *artAllocator, c byte, child artNode) {
+func (an *artNode) replaceChild(a *artAllocator, c byte, child artNode) {
 	switch an.kind {
 	case typeNode4:
 		n4 := an.asNode4(a)
-		for idx := uint8(0); idx < n4.nodeNum; idx++ {
-			if n4.keys[idx] == c {
-				n4.children[idx] = child
-				return
-			}
-		}
-		panic("swap child failed")
-	case typeNode16:
-		n16 := an.asNode16(a)
-		for idx := uint8(0); idx < n16.nodeNum; idx++ {
-			if n16.keys[idx] == c {
-				n16.children[idx] = child
-				return
-			}
-		}
-		panic("swap child failed")
-	case typeNode48:
-		n48 := an.asNode48(a)
-		if n48.present[c>>n48s]&(1<<(c%n48m)) != 0 {
-			n48.children[n48.keys[c]] = child
+		idx := n4.findChild(c)
+		if idx != notExistIndex {
+			n4.children[idx] = child
 			return
 		}
-		panic("swap child failed")
+	case typeNode16:
+		n16 := an.asNode16(a)
+		idx := n16.findChild(c)
+		if idx != notExistIndex {
+			n16.children[idx] = child
+			return
+		}
+	case typeNode48:
+		n48 := an.asNode48(a)
+		idx := n48.findChild(c)
+		if idx != notExistIndex {
+			n48.children[idx] = child
+			return
+		}
 	case typeNode256:
-		an.addChild256(a, c, false, child)
+		n256 := an.asNode256(a)
+		if n256.present[c>>n48s]&(1<<(c%n48m)) != 0 {
+			n256.children[c] = child
+			return
+		}
 	}
+	panic("replace child failed")
 }
 
 // addChild adds a child to the node.
 // the added index `c` should not exist.
-// Return if the node is grown to higher capacity.
+// Return true if the node is grown to higher capacity.
 func (an *artNode) addChild(a *artAllocator, c byte, inplace bool, child artNode) bool {
 	switch an.kind {
 	case typeNode4:
@@ -538,10 +550,12 @@ func (an *artNode) addChild4(a *artAllocator, c byte, inplace bool, child artNod
 	}
 
 	if i < node.nodeNum {
-		for j := node.nodeNum; j > i; j-- {
-			node.keys[j] = node.keys[j-1]
-			node.children[j] = node.children[j-1]
-		}
+		copy(node.keys[i+1:node.nodeNum+1], node.keys[i:node.nodeNum])
+		copy(node.children[i+1:node.nodeNum+1], node.children[i:node.nodeNum])
+		//for j := node.nodeNum; j > i; j-- {
+		//	node.keys[j] = node.keys[j-1]
+		//	node.children[j] = node.children[j-1]
+		//}
 	}
 	node.keys[i] = c
 	node.children[i] = child

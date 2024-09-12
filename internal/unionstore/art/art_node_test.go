@@ -157,7 +157,7 @@ func TestNodePrefix(t *testing.T) {
 		matchKey = append(make([]byte, 10), matchKey...)
 		mismatchKey = append(make([]byte, 10), mismatchKey...)
 		leafAddr, _ = allocator.allocLeaf(leafKey)
-		an.swapChild(&allocator, 2, artNode{kind: typeLeaf, addr: leafAddr})
+		an.replaceChild(&allocator, 2, artNode{kind: typeLeaf, addr: leafAddr})
 		n.setPrefix(leafKey[10:], maxPrefixLen+1)
 		require.Equal(t, uint32(maxPrefixLen+1), n.matchDeep(&allocator, an, matchKey, 10))
 		require.Equal(t, uint32(maxPrefixLen), n.matchDeep(&allocator, an, mismatchKey, 10))

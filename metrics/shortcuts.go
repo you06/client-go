@@ -173,10 +173,6 @@ var (
 	StaleReadLocalOutBytes  prometheus.Counter
 	StaleReadRemoteInBytes  prometheus.Counter
 	StaleReadRemoteOutBytes prometheus.Counter
-
-	BatchRequestDurationSend prometheus.Observer
-	BatchRequestDurationRecv prometheus.Observer
-	BatchRequestDurationDone prometheus.Observer
 )
 
 func initShortcuts() {
@@ -291,9 +287,8 @@ func initShortcuts() {
 	OnePCTxnCounterError = TiKVOnePCTxnCounter.WithLabelValues("err")
 	OnePCTxnCounterFallback = TiKVOnePCTxnCounter.WithLabelValues("fallback")
 
-	BatchRequestDurationSend = TiKVBatchRequestDuration.WithLabelValues("send")
-	BatchRequestDurationRecv = TiKVBatchRequestDuration.WithLabelValues("recv")
-	BatchRequestDurationDone = TiKVBatchRequestDuration.WithLabelValues("done")
+	BatchRecvHistogramOK = TiKVBatchRecvLatency.WithLabelValues("ok")
+	BatchRecvHistogramError = TiKVBatchRecvLatency.WithLabelValues("err")
 
 	PrewriteAssertionUsageCounterNone = TiKVPrewriteAssertionUsageCounter.WithLabelValues("none")
 	PrewriteAssertionUsageCounterExist = TiKVPrewriteAssertionUsageCounter.WithLabelValues("exist")

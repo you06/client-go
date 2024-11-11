@@ -116,7 +116,7 @@ func (db *artDBWithContext) FlushWait() error { return nil }
 
 // GetMemDB implements the MemBuffer interface.
 func (db *artDBWithContext) GetMemDB() *MemDB {
-	return db
+	return nil
 }
 
 // BatchGet returns the values for given keys from the MemBuffer.

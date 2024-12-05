@@ -38,6 +38,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"io"
 	"math"
 	"runtime/trace"
@@ -688,6 +689,20 @@ func (c *RPCClient) sendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	// request to TiDB is not high frequency.
 	pri := req.GetResourceControlContext().GetOverridePriority()
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
+		if req.Type == tikvrpc.CmdCop && strings.Contains(req.RequestSource, "leader_external_") && !req.IsRetryRequest {
+			logutil.BgLogger().Info("INJECT busy error for external request", zap.String("request-source", req.RequestSource))
+			if !req.ReplicaRead && req.BusyThresholdMs > 0 {
+				return &tikvrpc.Response{
+					Resp: &coprocessor.Response{
+						RegionError: &errorpb.Error{
+							ServerIsBusy: &errorpb.ServerIsBusy{
+								EstimatedWaitMs: req.BusyThresholdMs + 1,
+							},
+						},
+					},
+				}, nil
+			}
+		}
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			defer trace.StartRegion(ctx, req.Type.String()).End()
 			return wrapErrConn(sendBatchRequest(ctx, addr, req.ForwardedHost, connArray.batchConn, batchReq, timeout, pri))

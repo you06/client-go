@@ -2408,7 +2408,7 @@ func (c *twoPhaseCommitter) getCommitInfo() *util.CommitInfo {
 		CommitTS:    atomic.LoadUint64(&c.commitTS),
 		MutationLen: c.mutations.Len(),
 		TxnSize:     c.txnSize,
-		Primary:     c.primary(),
+		Primary:     c.primaryKey,
 	}
 }
 

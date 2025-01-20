@@ -183,8 +183,12 @@ func (t *ART) search(key artKey) (arena.MemdbArenaAddr, *artLeaf) {
 		}
 
 		if node.prefixLen > 0 {
-			prefixLen := node.match(key, depth)
-			if prefixLen < min(node.prefixLen, maxInNodePrefixLen) {
+			// prefixLen := node.match(key, depth)
+			// if prefixLen < min(node.prefixLen, maxInNodePrefixLen) {
+			// 	return arena.NullAddr, nil
+			// }
+			inNodePrefixLen := min(node.prefixLen, maxInNodePrefixLen)
+			if !bytes.Equal(key[depth:depth+inNodePrefixLen], node.prefix[:inNodePrefixLen]) {
 				return arena.NullAddr, nil
 			}
 			// If node.prefixLen > maxInNodePrefixLen, we optimistically match the prefix here.

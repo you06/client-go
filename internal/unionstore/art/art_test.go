@@ -25,6 +25,12 @@ func TestSimple(t *testing.T) {
 		require.Nil(t, err, i)
 		require.Equal(t, val, key, i)
 	}
+
+	tree = New()
+	tree.Get([]byte{0})
+	tree.Set([]byte{0}, []byte{0})
+	require.Equal(t, tree.GetCacheHitCount(), uint64(0))
+	require.Equal(t, tree.GetCacheMissCount(), uint64(2))
 }
 
 func TestSubNode(t *testing.T) {

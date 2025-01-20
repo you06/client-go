@@ -53,3 +53,6 @@ type MemDB = artDBWithContext
 
 var NewMemDB = newArtDBWithContext
 var NewMemDBWithContext = newArtDBWithContext
+
+var NewART = newArtDBWithContext
+var NewRBT = newRbtDBWithContext

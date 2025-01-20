@@ -352,7 +352,7 @@ func (an *artNode) asNode256(a *artAllocator) *node256 {
 }
 
 // for amd64 and arm64 architectures, we use the chunk comparison to speed up finding the longest common prefix.
-const enableChunkComparison = runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64"
+const enableChunkComparison = false && runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64"
 
 // longestCommonPrefix returns the length of the longest common prefix of two keys.
 // the LCP is calculated from the given depth, you need to guarantee l1Key[:depth] equals to l2Key[:depth] before calling this function.

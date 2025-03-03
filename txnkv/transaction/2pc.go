@@ -2411,6 +2411,11 @@ func (c *twoPhaseCommitter) getCommitInfo() *util.CommitInfo {
 	if !c.txn.isPipelined {
 		mutationLen = c.mutations.Len()
 	}
+	logutil.BgLogger().Warn("DBG getCommitInfo",
+		zap.String("txnType", txnType),
+		zap.Int("mutationLen", mutationLen),
+		zap.Uint64("startTS", c.startTS),
+		zap.Uint64("commitTS", atomic.LoadUint64(&c.commitTS)))
 	return &util.CommitInfo{
 		TxnType:     txnType,
 		StartTS:     c.startTS,

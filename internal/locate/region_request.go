@@ -1626,6 +1626,13 @@ func (s *RegionRequestSender) SendReqCtx(
 			return resp, nil, retryTimes, err
 		}
 
+		logutil.Logger(bo.GetCtx()).Info(
+			"select rpc context",
+			zap.Uint64("region", regionID.GetID()),
+			zap.Stringer("rpc context", rpcCtx),
+			zap.Int("times", retryTimes),
+		)
+
 		var isLocalTraffic bool
 		if staleReadCollector != nil && s.replicaSelector != nil {
 			if target := s.replicaSelector.targetReplica(); target != nil {

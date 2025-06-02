@@ -38,6 +38,7 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -214,4 +215,10 @@ func newBackoffFn(base, cap, jitter int) backoffFn {
 
 func expo(base, cap, n int) int {
 	return int(math.Min(float64(cap), float64(base)*math.Pow(2.0, float64(n))))
+}
+
+// BoPDPCWithReason creates a new config for PD RPC with a specific error message.
+func BoPDPCWithReason(msg string) *Config {
+	stack := string(debug.Stack())
+	return NewConfig("pdRPC", &metrics.BackoffHistogramPD, NewBackoffFnCfg(500, 3000, EqualJitter), tikverr.NewErrPDServerTimeout(msg+"\n"+stack))
 }

@@ -257,7 +257,7 @@ func (s *KVStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64) 
 		if err == nil {
 			break
 		}
-		err = bo.Backoff(retry.BoPDRPC, errors.New(err.Error()))
+		err = bo.Backoff(retry.BoPDPCWithReason("KVStore.scatterRegion"), errors.New(err.Error()))
 		if err != nil {
 			return err
 		}

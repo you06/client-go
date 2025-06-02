@@ -423,6 +423,10 @@ func (r *Region) checkRegionCacheTTL(ts int64) bool {
 
 // invalidate invalidates a region, next time it will got null result.
 func (r *Region) invalidate(reason InvalidReason, nocount ...bool) {
+	logutil.BgLogger().Warn("invalidate region cache",
+		zap.Uint64("region_id", r.meta.Id),
+		zap.Int32("invalid_reason", int32(reason)),
+		zap.Stack("stack"))
 	if atomic.CompareAndSwapInt32((*int32)(&r.invalidReason), int32(Ok), int32(reason)) {
 		if len(nocount) == 0 || !nocount[0] {
 			metrics.RegionCacheCounterWithInvalidateRegionFromCacheOK.Inc()
@@ -2059,7 +2063,7 @@ func (c *RegionCache) loadRegion(bo *retry.Backoffer, key []byte, isEndKey bool,
 	opts = append(opts, pd.WithBuckets())
 	for {
 		if backoffErr != nil {
-			err := bo.Backoff(retry.BoPDRPC, backoffErr)
+			err := bo.Backoff(retry.BoPDPCWithReason("RegionCache.loadRegion"), backoffErr)
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}
@@ -2112,7 +2116,7 @@ func (c *RegionCache) loadRegionByID(bo *retry.Backoffer, regionID uint64) (*Reg
 	var backoffErr error
 	for {
 		if backoffErr != nil {
-			err := bo.Backoff(retry.BoPDRPC, backoffErr)
+			err := bo.Backoff(retry.BoPDPCWithReason("RegionCache.loadRegionByID"), backoffErr)
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}
@@ -2191,7 +2195,7 @@ func (c *RegionCache) scanRegions(bo *retry.Backoffer, startKey, endKey []byte, 
 	var backoffErr error
 	for {
 		if backoffErr != nil {
-			err := bo.Backoff(retry.BoPDRPC, backoffErr)
+			err := bo.Backoff(retry.BoPDPCWithReason("RegionCache.scanRegions"), backoffErr)
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}
@@ -2257,7 +2261,7 @@ func (c *RegionCache) batchScanRegions(bo *retry.Backoffer, keyRanges []pd.KeyRa
 	var backoffErr error
 	for {
 		if backoffErr != nil {
-			err := bo.Backoff(retry.BoPDRPC, backoffErr)
+			err := bo.Backoff(retry.BoPDPCWithReason("RegionCache.batchScanRegions"), backoffErr)
 			if err != nil {
 				return nil, errors.WithStack(err)
 			}

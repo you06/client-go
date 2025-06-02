@@ -488,7 +488,7 @@ func (s *KVStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint64,
 		if err == nil {
 			return startTS, nil
 		}
-		err = bo.Backoff(retry.BoPDRPC, errors.Errorf("get timestamp failed: %v", err))
+		err = bo.Backoff(retry.BoPDPCWithReason("KVStore.getTimestampWithRetry"), errors.Errorf("get timestamp failed: %v", err))
 		if err != nil {
 			return 0, err
 		}
@@ -511,7 +511,7 @@ func (s *KVStore) getAllTSOKeyspaceGroupMinTSWithRetry(bo *Backoffer) (uint64, e
 		if strings.Contains(err.Error(), "Unimplemented") {
 			return 0, err
 		}
-		err = bo.Backoff(retry.BoPDRPC, errors.Errorf("get minimum timestamp failed: %v", err))
+		err = bo.Backoff(retry.BoPDPCWithReason("KVStore.getAllTSOKeyspaceGroupMinTSWithRetry"), errors.Errorf("get minimum timestamp failed: %v", err))
 		if err != nil {
 			return 0, err
 		}

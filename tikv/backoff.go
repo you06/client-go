@@ -84,7 +84,7 @@ func BoTxnLock() *BackoffConfig {
 
 // BoPDRPC returns the default backoff config for PDRPC.
 func BoPDRPC() *BackoffConfig {
-	return retry.BoPDRPC
+	return retry.BoPDPCWithReason("func BoPDRPC")
 }
 
 // BoTiKVRPC returns the default backoff config for TiKVRPC.

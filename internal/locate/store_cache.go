@@ -409,7 +409,7 @@ func (s *Store) initResolve(bo *retry.Backoffer, c storeCache) (addr string, err
 		if err != nil && !isStoreNotFoundError(err) {
 			// TODO: more refine PD error status handle.
 			err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", s.storeID, err)
-			if err = bo.Backoff(retry.BoPDRPC, err); err != nil {
+			if err = bo.Backoff(retry.BoPDPCWithReason("Store.initResolve"), err); err != nil {
 				return
 			}
 			continue

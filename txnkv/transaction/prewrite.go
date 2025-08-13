@@ -104,6 +104,9 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		} else if m.NeedConstraintCheckInPrewrite(i) {
 			pessimisticActions[i] = kvrpcpb.PrewriteRequest_DO_CONSTRAINT_CHECK
 		} else {
+			if c.sessionID > 0 && c.isPessimistic {
+				panic("unexpected skipping pessimistic lock, key: " + string(m.GetKey(i)))
+			}
 			pessimisticActions[i] = kvrpcpb.PrewriteRequest_SKIP_PESSIMISTIC_CHECK
 		}
 

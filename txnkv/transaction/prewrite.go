@@ -35,6 +35,8 @@
 package transaction
 
 import (
+	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"sync/atomic"
@@ -105,7 +107,9 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 			pessimisticActions[i] = kvrpcpb.PrewriteRequest_DO_CONSTRAINT_CHECK
 		} else {
 			if c.sessionID > 0 && c.isPessimistic {
-				panic("unexpected skipping pessimistic lock, key: " + string(m.GetKey(i)))
+				val, _ := c.txn.GetMemBuffer().Get(context.Background(), m.GetKey(i))
+				flags, _ := c.txn.GetMemBuffer().GetFlags(m.GetKey(i))
+				panic(fmt.Sprintf("unexpected skipping pessimistic lock, flags: %d, key: %s, val: %s, ", flags, string(m.GetKey(i)), string(val)))
 			}
 			pessimisticActions[i] = kvrpcpb.PrewriteRequest_SKIP_PESSIMISTIC_CHECK
 		}

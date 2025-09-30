@@ -2360,7 +2360,7 @@ func (c *RegionCache) batchScanRegions(bo *retry.Backoffer, keyRanges []router.K
 				}
 				regionStrs = append(regionStrs, fmt.Sprintf("[%s, %s), bucket version: %d, buckets: %v", redact.Key(r.Meta.StartKey), redact.Key(r.Meta.EndKey), r.Buckets.Version, bucketsStr))
 			} else {
-				regionStrs = append(regionStrs, fmt.Sprintf("[%s, %s)", redact.Key(r.Meta.StartKey), redact.Key(r.Meta.EndKey)))
+				regionStrs = append(regionStrs, fmt.Sprintf("[%s, %s) no bucket", redact.Key(r.Meta.StartKey), redact.Key(r.Meta.EndKey)))
 			}
 		}
 		logutil.BgLogger().Warn("[RegionBoundaryDebug] load regions from PD",

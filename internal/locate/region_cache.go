@@ -2346,6 +2346,19 @@ func (c *RegionCache) batchScanRegions(bo *retry.Backoffer, keyRanges []router.K
 			)
 			continue
 		}
+
+		keyRangeStrs := make([]string, 0, len(keyRanges))
+		for _, rg := range keyRanges {
+			keyRangeStrs = append(keyRangeStrs, fmt.Sprintf("[%s, %s)", redact.Key(rg.StartKey), redact.Key(rg.EndKey)))
+		}
+		regionStrs := make([]string, 0, len(regionsInfo))
+		for _, r := range regionsInfo {
+			regionStrs = append(regionStrs, fmt.Sprintf("[%s, %s)", redact.Key(r.Meta.StartKey), redact.Key(r.Meta.EndKey)))
+		}
+		logutil.BgLogger().Warn("[RegionBoundaryDebug] load regions from PD",
+			zap.Strings("keyRanges", keyRangeStrs),
+			zap.Strings("regions", regionStrs))
+
 		validRegions, err := c.handleRegionInfos(bo, regionsInfo, batchOpt.needRegionHasLeaderPeer)
 		if err != nil {
 			return nil, err

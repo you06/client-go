@@ -10,6 +10,7 @@ import (
 
 // NeedRedact returns whether to redact log
 func NeedRedact() bool {
+	return false
 	mode := errors.RedactLogEnabled.Load()
 	return mode != errors.RedactLogDisable && mode != ""
 }

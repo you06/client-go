@@ -487,6 +487,7 @@ func (s *RegionRequestSender) SendReqAsync(
 	if req.Context.MaxExecutionDurationMs == 0 {
 		req.Context.MaxExecutionDurationMs = uint64(timeout.Milliseconds())
 	}
+	patchTraceTag(bo.GetCtx(), req)
 
 	s.reset()
 	startTime := time.Now()
@@ -1435,6 +1436,7 @@ func (s *RegionRequestSender) SendReqCtx(
 	if req.Context.MaxExecutionDurationMs == 0 {
 		req.Context.MaxExecutionDurationMs = uint64(timeout.Milliseconds())
 	}
+	patchTraceTag(bo.GetCtx(), req)
 
 	state := &sendReqState{
 		RegionRequestSender: s,
@@ -2340,4 +2342,10 @@ func failpointSendReqResult(req *tikvrpc.Request, et tikvrpc.EndpointType) (
 		}
 	}
 	return
+}
+
+func patchTraceTag(ctx context.Context, req *tikvrpc.Request) {
+	if tag, ok := util.GetTracer(ctx); ok {
+		req.Context.TraceId = tag
+	}
 }

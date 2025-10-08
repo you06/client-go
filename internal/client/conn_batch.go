@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pkg/errors"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/internal/logutil"
@@ -311,6 +312,14 @@ func (a *batchConn) getClientAndSend() {
 		atomic.StoreInt64(&e.sendLat, int64(reqSendTime.Sub(e.start)))
 		if trace.IsEnabled() {
 			trace.Log(e.ctx, "rpc", "send")
+		}
+		if getReq, ok := e.req.Cmd.(*tikvpb.BatchCommandsRequest_Request_Get); ok {
+			if getReq.Get.Context != nil && len(getReq.Get.Context.TraceId) > 0 {
+				logutil.BgLogger().Debug("send batch get request",
+					zap.Uint64("version", getReq.Get.Version),
+					zap.String("key", string(getReq.Get.Key)),
+					zap.String("trace-id", getReq.Get.Context.TraceId))
+			}
 		}
 	})
 	if req != nil {

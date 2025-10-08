@@ -2356,7 +2356,7 @@ func (c *RegionCache) batchScanRegions(bo *retry.Backoffer, keyRanges []router.K
 			if r.Buckets != nil {
 				bucketsStr := make([]string, 0, len(r.Buckets.Keys))
 				for _, k := range r.Buckets.Keys {
-					bucketsStr = append(bucketsStr, fmt.Sprintf("%v", redact.Key(k)))
+					bucketsStr = append(bucketsStr, fmt.Sprintf("%s", redact.Key(k)))
 				}
 				regionStrs = append(regionStrs, fmt.Sprintf("[%s, %s), bucket version: %d, buckets: %v", redact.Key(r.Meta.StartKey), redact.Key(r.Meta.EndKey), r.Buckets.Version, bucketsStr))
 			} else {

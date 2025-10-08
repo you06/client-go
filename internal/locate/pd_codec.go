@@ -36,15 +36,19 @@ package locate
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pkg/errors"
 	"github.com/tikv/client-go/v2/internal/apicodec"
+	"github.com/tikv/client-go/v2/internal/logutil"
+	"github.com/tikv/client-go/v2/util/redact"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
+	"go.uber.org/zap"
 )
 
 var _ pd.Client = &CodecPDClient{}
@@ -151,14 +155,44 @@ func (c *CodecPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey
 // returned StartKey && EndKey from pd-server.
 // if limit > 0, it limits the maximum number of returned regions, should check if the result regions fully contain the given key ranges.
 func (c *CodecPDClient) BatchScanRegions(ctx context.Context, keyRanges []router.KeyRange, limit int, opts ...opt.GetRegionOption) ([]*router.Region, error) {
+	keyRangesToStrs := func(krs []router.KeyRange) []string {
+		strs := make([]string, len(krs))
+		for i, kr := range krs {
+			strs[i] = fmt.Sprintf("[%s, %s)", redact.Key(kr.StartKey), redact.Key(kr.EndKey))
+		}
+		return strs
+	}
+	regionsToStrs := func(rs []*router.Region) []string {
+		strs := make([]string, len(rs))
+		for i, r := range rs {
+			if r == nil || r.Meta == nil {
+				continue
+			}
+			strs[i] = fmt.Sprintf("%d:[%s, %s)", r.Meta.Id, redact.Key(r.Meta.StartKey), redact.Key(r.Meta.EndKey))
+			if r.Buckets != nil {
+				bucketsStr := make([]string, 0, len(r.Buckets.Keys))
+				for _, k := range r.Buckets.Keys {
+					bucketsStr = append(bucketsStr, redact.Key(k))
+				}
+				strs[i] += fmt.Sprintf(", bucket version: %d, buckets: %v", r.Buckets.Version, bucketsStr)
+			}
+		}
+		return strs
+	}
+
+	rawRangesStrs := keyRangesToStrs(keyRanges)
 	encodedRanges := make([]router.KeyRange, len(keyRanges))
 	for i, keyRange := range keyRanges {
 		encodedRanges[i].StartKey, encodedRanges[i].EndKey = c.codec.EncodeRegionRange(keyRange.StartKey, keyRange.EndKey)
 	}
+	encodedRangesStrs := keyRangesToStrs(encodedRanges)
+
 	regions, err := c.Client.BatchScanRegions(ctx, encodedRanges, limit, opts...)
 	if err != nil {
 		return nil, errors.WithStack(err)
 	}
+	rawRegionsStr := regionsToStrs(regions)
+
 	for _, region := range regions {
 		if region != nil {
 			err = c.decodeRegionKeyInPlace(region)
@@ -167,6 +201,14 @@ func (c *CodecPDClient) BatchScanRegions(ctx context.Context, keyRanges []router
 			}
 		}
 	}
+	decodedRegionsStr := regionsToStrs(regions)
+
+	logutil.BgLogger().Warn("[RegionBoundaryDebug] check encode/decode in BatchScanRegions",
+		zap.Strings("rawRangesStrs", rawRangesStrs),
+		zap.Strings("encodedRangesStrs", encodedRangesStrs),
+		zap.Strings("rawRegionsStr", rawRegionsStr),
+		zap.Strings("decodedRegionsStr", decodedRegionsStr))
+
 	return regions, nil
 }
 

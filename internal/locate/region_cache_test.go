@@ -3158,3 +3158,53 @@ func (s *testRegionCacheSuite) TestUpdateBucketsConcurrently() {
 	time.Sleep(100 * time.Millisecond)
 	s.Equal(uint64(2), atomic.LoadUint64(&count))
 }
+
+func (s *testRegionCacheSuite) TestLocateBucketStale() {
+	startKey := []byte("e")
+	endKey := []byte("t")
+	for _, splitKey := range [][]byte{startKey, endKey} {
+		region2 := s.cluster.AllocID()
+		newPeers := s.cluster.AllocIDs(2)
+		s.cluster.Split(s.region1, region2, splitKey, newPeers, newPeers[0])
+		if bytes.Equal(splitKey, startKey) {
+			s.region1 = region2
+		}
+	}
+
+	keyLocation, err := s.cache.LocateRegionByID(s.bo, s.region1)
+	s.Nil(err)
+	s.Equal(keyLocation.StartKey, startKey)
+	s.Equal(keyLocation.EndKey, endKey)
+
+	// left stale buckets
+	// bucket: b --- c
+	// region:           e --- t
+	staleBucketKeysLeft := [][]byte{[]byte("b"), []byte("c")}
+	s.cluster.SplitRegionBuckets(s.region1, staleBucketKeysLeft, 1)
+
+	s.cache.clear()
+	keyLocation, err = s.cache.LocateRegionByID(s.bo, s.region1)
+	s.Nil(err)
+	s.Equal(keyLocation.Buckets.Keys, [][]byte{[]byte("b"), []byte("c")})
+	s.Nil(keyLocation.LocateBucket([]byte("a")))                                                   // ok
+	s.Nil(keyLocation.LocateBucket([]byte("bb")))                                                  // the key is in bucket but out of region
+	s.Nil(keyLocation.LocateBucket([]byte("d")))                                                   // ok
+	s.Equal(keyLocation.LocateBucket([]byte("f")), &Bucket{StartKey: []byte("c"), EndKey: endKey}) // the returned bucket extends the region boundary
+	s.Nil(keyLocation.LocateBucket([]byte("v")))                                                   // ok
+
+	// right stale buckets
+	// bucket:           x --- y
+	// region: e --- t
+	staleBucketKeysRight := [][]byte{[]byte("x"), []byte("y")}
+	s.cluster.SplitRegionBuckets(s.region1, staleBucketKeysRight, 1)
+
+	s.cache.clear()
+	keyLocation, err = s.cache.LocateRegionByID(s.bo, s.region1)
+	s.Nil(err)
+	s.Equal(keyLocation.Buckets.Keys, [][]byte{[]byte("x"), []byte("y")})
+	s.Nil(keyLocation.LocateBucket([]byte("a")))                                                     // ok
+	s.Equal(keyLocation.LocateBucket([]byte("f")), &Bucket{StartKey: startKey, EndKey: []byte("x")}) // the returned bucket extends the region boundary
+	s.Nil(keyLocation.LocateBucket([]byte("v")))                                                     // ok
+	s.Nil(keyLocation.LocateBucket([]byte("xx")))                                                    // the key is in bucket but out of region
+	s.Nil(keyLocation.LocateBucket([]byte("z")))                                                     // ok
+}

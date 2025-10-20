@@ -2,6 +2,7 @@ package art
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -261,4 +262,24 @@ func TestDiscardValues(t *testing.T) {
 	require.Panics(t, func() {
 		tree.Set([]byte{3}, []byte{4})
 	})
+}
+
+func TestMemoryTrackedOnTime(t *testing.T) {
+	db := New()
+
+	var memUsage uint64
+	db.SetMemoryFootprintChangeHook(func(mem uint64) {
+		memUsage = mem
+	})
+
+	memShouldCheck := func() {
+		currMemUsage := memUsage
+		db.allocator.nodeAllocator.OnMemChange() // force tracking the latest memory usage
+		require.Equal(t, currMemUsage, memUsage)
+	}
+	for i := 0; i < 1000; i++ {
+		key := []byte(strconv.Itoa(i))
+		db.Set(key, key)
+		memShouldCheck()
+	}
 }

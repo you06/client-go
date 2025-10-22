@@ -103,7 +103,7 @@ require (
 	golang.org/x/text v0.20.0 // indirect
 	golang.org/x/time v0.7.0 // indirect
 	golang.org/x/tools v0.27.0 // indirect
-	gonum.org/v1/gonum v0.8.2 // indirect
+	gonum.org/v1/gonum v0.11.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240318140521-94a12d6c2237 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240515191416-fc5f0ca64291 // indirect
 	google.golang.org/grpc v1.63.2 // indirect
@@ -123,3 +123,5 @@ replace (
 	github.com/pingcap/tidb => github.com/you06/tidb v1.1.0-beta.0.20250107072714-ec9aedaf5eb3
 	github.com/pingcap/tidb/pkg/parser => github.com/you06/tidb/pkg/parser v0.0.0-20250107072714-ec9aedaf5eb3
 )
+
+replace github.com/pingcap/kvproto => github.com/you06/kvproto v0.0.0-20251020061652-12035a620aaf

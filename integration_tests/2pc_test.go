@@ -2813,3 +2813,50 @@ func (s *testCommitterSuite) Test2PCCleanupLifecycleHooks() {
 	wg.Wait()
 	s.Equal(reachedPost.Load(), true)
 }
+
+func (s *testCommitterSuite) TestLockAndCommitSharedLock() {
+	txn1 := s.begin()
+	txn1.SetPessimistic(true)
+	txn2 := s.begin()
+	txn2.SetPessimistic(true)
+	txn3 := s.begin()
+	txn2.SetPessimistic(true)
+
+	mustGetTS := func() uint64 {
+		ts, err := s.store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		s.Nil(err)
+		return ts
+	}
+
+	pk1 := []byte("shared_lock_pk1")
+	pk2 := []byte("shared_lock_pk2")
+	pk3 := []byte("shared_lock_pk3")
+	key := []byte("shared_lock_key")
+
+	s.Nil(txn1.LockKeys(context.Background(), kv.NewLockCtx(mustGetTS(), 1000, time.Now()), pk1))
+	s.Equal(txn1.GetCommitter().GetPrimaryKey(), pk1)
+	lockctx1 := kv.NewLockCtx(mustGetTS(), 1000, time.Now())
+	lockctx1.IsShared = true
+	s.Nil(txn1.LockKeys(context.Background(), lockctx1, key))
+
+	s.Nil(txn2.LockKeys(context.Background(), kv.NewLockCtx(mustGetTS(), 1000, time.Now()), pk2))
+	s.Equal(txn2.GetCommitter().GetPrimaryKey(), pk2)
+	lockctx2 := kv.NewLockCtx(txn2.StartTS()+4, 1000, time.Now())
+	lockctx2.IsShared = true
+	s.Nil(txn2.LockKeys(context.Background(), lockctx2, key))
+
+	s.Nil(txn3.LockKeys(context.Background(), kv.NewLockCtx(mustGetTS(), 1000, time.Now()), pk3))
+	s.Equal(txn3.GetCommitter().GetPrimaryKey(), pk3)
+	lockDone := make(chan time.Time)
+	go func() {
+		s.NotNil(txn3.LockKeys(context.Background(), kv.NewLockCtx(mustGetTS(), 1000, time.Now()), key)) // shouold block and return conflict
+		lockDone <- time.Now()
+	}()
+
+	time.Sleep(time.Second)
+	beforeRelease := time.Now()
+	txn1.Commit(context.Background())
+	txn2.Commit(context.Background())
+	afterRelease := <-lockDone
+	s.True(afterRelease.After(beforeRelease), "txn3 should block until txn1 and txn2 commit")
+}

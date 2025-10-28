@@ -567,11 +567,14 @@ func (c *twoPhaseCommitter) initKeysAndMutations(ctx context.Context) error {
 		var value []byte
 		var op kvrpcpb.Op
 		if !it.HasValue() {
-			if !flags.HasLocked() {
-				continue
+			if flags.HasLocked() {
+				op = kvrpcpb.Op_Lock
+				lockCnt++
+			} else if flags.HasSharedLocked() {
+				op = kvrpcpb.Op_Shared
+				lockCnt++
 			}
-			op = kvrpcpb.Op_Lock
-			lockCnt++
+			continue
 		} else {
 			value = it.Value()
 			var isUnnecessaryKV bool

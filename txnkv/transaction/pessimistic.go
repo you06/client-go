@@ -148,12 +148,16 @@ type diagnosticContext struct {
 func (action actionPessimisticLock) handleSingleBatch(
 	c *twoPhaseCommitter, bo *retry.Backoffer, batch batchMutations,
 ) error {
+	op := kvrpcpb.Op_PessimisticLock
+	if c.lockCtx != nil && c.lockCtx.IsShared {
+		op = kvrpcpb.Op_Shared
+	}
 	convertMutationsToPb := func(committerMutations CommitterMutations) []*kvrpcpb.Mutation {
 		mutations := make([]*kvrpcpb.Mutation, committerMutations.Len())
 		c.txn.GetMemBuffer().RLock()
 		for i := 0; i < committerMutations.Len(); i++ {
 			mut := &kvrpcpb.Mutation{
-				Op:  kvrpcpb.Op_PessimisticLock,
+				Op:  op,
 				Key: committerMutations.GetKey(i),
 			}
 			if c.txn.us.HasPresumeKeyNotExists(committerMutations.GetKey(i)) {

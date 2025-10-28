@@ -81,6 +81,8 @@ type LockCtx struct {
 	OnDeadlock          func(*tikverr.ErrDeadlock)
 	// max_execution_time support - if zero, timeout checking is disabled
 	MaxExecutionDeadline time.Time
+	// IsShared indicates whether the locks are shared locks.
+	IsShared bool
 }
 
 // LockWaitTime returns lockWaitTimeInMs

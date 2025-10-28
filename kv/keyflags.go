@@ -78,6 +78,9 @@ const (
 	// ends when the lock is acquired.
 	flagPreviousPresumeKNE
 
+	// Similar to flagKeyLocked, but it's a shared lock.
+	flagKeySharedLocked
+
 	persistentFlags = flagKeyLocked | flagKeyLockedValExist | flagNeedConstraintCheckInPrewrite
 )
 
@@ -156,6 +159,10 @@ func (f KeyFlags) HasNewlyInserted() bool {
 	return f&flagNewlyInserted != 0
 }
 
+func (f KeyFlags) HasSharedLocked() bool {
+	return f&flagKeySharedLocked != 0
+}
+
 // ApplyFlagsOps applys flagspos to origin.
 func ApplyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 	for _, op := range ops {
@@ -206,6 +213,8 @@ func ApplyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 			origin &= ^flagNeedConstraintCheckInPrewrite
 		case SetPreviousPresumeKNE:
 			origin |= flagPreviousPresumeKNE
+		case SetKeySharedLocked:
+			origin |= flagKeySharedLocked
 		}
 	}
 	return origin
@@ -217,8 +226,8 @@ type FlagsOp uint32
 const (
 	// SetPresumeKeyNotExists marks the existence of the associated key is checked lazily.
 	// Implies KeyFlags.HasNeedCheckExists() == true.
-	SetPresumeKeyNotExists FlagsOp = 1 << iota
 	// DelPresumeKeyNotExists reverts SetPresumeKeyNotExists.
+	SetPresumeKeyNotExists FlagsOp = 1 << iota
 	DelPresumeKeyNotExists
 	// SetKeyLocked marks the associated key has acquired lock.
 	SetKeyLocked
@@ -257,4 +266,6 @@ const (
 	DelNeedConstraintCheckInPrewrite
 	// SetPreviousPresumeKNE sets flagPreviousPresumeKNE.
 	SetPreviousPresumeKNE
+	// Similar as SetKeyLocked, but it's shared lock.
+	SetKeySharedLocked
 )

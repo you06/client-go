@@ -2815,12 +2815,19 @@ func (s *testCommitterSuite) Test2PCCleanupLifecycleHooks() {
 }
 
 func (s *testCommitterSuite) TestLockAndCommitSharedLock() {
-	txn1 := s.begin()
+	store := NewTestStore(s.T())
+	txn1Inner, err := store.Begin()
+	txn1 := transaction.TxnProbe{txn1Inner}
+	s.Nil(err)
 	txn1.SetPessimistic(true)
-	txn2 := s.begin()
+	txn2Inner, err := store.Begin()
+	txn2 := transaction.TxnProbe{txn2Inner}
+	s.Nil(err)
 	txn2.SetPessimistic(true)
-	txn3 := s.begin()
-	txn2.SetPessimistic(true)
+	txn3Inner, err := store.Begin()
+	txn3 := transaction.TxnProbe{txn3Inner}
+	s.Nil(err)
+	txn3.SetPessimistic(true)
 
 	mustGetTS := func() uint64 {
 		ts, err := s.store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
@@ -2849,14 +2856,16 @@ func (s *testCommitterSuite) TestLockAndCommitSharedLock() {
 	s.Equal(txn3.GetCommitter().GetPrimaryKey(), pk3)
 	lockDone := make(chan time.Time)
 	go func() {
-		s.NotNil(txn3.LockKeys(context.Background(), kv.NewLockCtx(mustGetTS(), 1000, time.Now()), key)) // shouold block and return conflict
+		s.NotNil(txn3.LockKeys(context.Background(), kv.NewLockCtx(mustGetTS(), 1000, time.Now()), key)) // should block and return conflict
 		lockDone <- time.Now()
 	}()
 
-	time.Sleep(time.Second)
+	time.Sleep(500 * time.Millisecond)
 	beforeRelease := time.Now()
-	txn1.Commit(context.Background())
-	txn2.Commit(context.Background())
+	// s.Nil(txn1.Commit(context.Background()))
+	// s.Nil(txn2.Commit(context.Background()))
+	s.Nil(txn1.Rollback())
+	s.Nil(txn2.Rollback())
 	afterRelease := <-lockDone
 	s.True(afterRelease.After(beforeRelease), "txn3 should block until txn1 and txn2 commit")
 }

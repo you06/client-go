@@ -1557,7 +1557,7 @@ func (txn *KVTxn) lockKeys(ctx context.Context, lockCtx *tikv.LockCtx, fn func()
 				setValExists = tikv.SetKeyLockedValueNotExists
 			}
 			op := tikv.SetKeyLocked
-			if lockCtx.IsShared {
+			if lockCtx.InShareMode {
 				op = tikv.SetKeySharedLocked
 			}
 			memBuf.UpdateFlags(key, op, tikv.DelNeedCheckExists, setValExists)

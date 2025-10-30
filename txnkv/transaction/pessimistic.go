@@ -149,7 +149,7 @@ func (action actionPessimisticLock) handleSingleBatch(
 	c *twoPhaseCommitter, bo *retry.Backoffer, batch batchMutations,
 ) error {
 	op := kvrpcpb.Op_PessimisticLock
-	if c.lockCtx != nil && action.LockCtx.IsShared {
+	if c.lockCtx != nil && action.LockCtx.InShareMode {
 		op = kvrpcpb.Op_Shared
 	}
 	convertMutationsToPb := func(committerMutations CommitterMutations) []*kvrpcpb.Mutation {

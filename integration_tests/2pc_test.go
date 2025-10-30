@@ -2843,13 +2843,13 @@ func (s *testCommitterSuite) TestLockAndCommitSharedLock() {
 	s.Nil(txn1.LockKeys(context.Background(), kv.NewLockCtx(mustGetTS(), 1000, time.Now()), pk1))
 	s.Equal(txn1.GetCommitter().GetPrimaryKey(), pk1)
 	lockctx1 := kv.NewLockCtx(mustGetTS(), 1000, time.Now())
-	lockctx1.IsShared = true
+	lockctx1.InShareMode = true
 	s.Nil(txn1.LockKeys(context.Background(), lockctx1, key))
 
 	s.Nil(txn2.LockKeys(context.Background(), kv.NewLockCtx(mustGetTS(), 1000, time.Now()), pk2))
 	s.Equal(txn2.GetCommitter().GetPrimaryKey(), pk2)
 	lockctx2 := kv.NewLockCtx(txn2.StartTS()+4, 1000, time.Now())
-	lockctx2.IsShared = true
+	lockctx2.InShareMode = true
 	s.Nil(txn2.LockKeys(context.Background(), lockctx2, key))
 
 	s.Nil(txn3.LockKeys(context.Background(), kv.NewLockCtx(mustGetTS(), 1000, time.Now()), pk3))

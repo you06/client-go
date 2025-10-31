@@ -1308,11 +1308,12 @@ func (txn *KVTxn) lockKeys(ctx context.Context, lockCtx *tikv.LockCtx, fn func()
 	memBuf.RLock()
 	for _, key := range keysInput {
 		// The value of lockedMap is only used by pessimistic transactions.
-		var valueExist, locked, checkKeyExists bool
+		var valueExist, locked, checkKeyExists, sharedLocked bool
 		if flags, err := memBuf.GetFlags(key); err == nil {
 			locked = flags.HasLocked()
 			valueExist = flags.HasLockedValueExists()
 			checkKeyExists = flags.HasNeedCheckExists()
+			sharedLocked = flags.HasSharedLocked()
 		}
 		// If the key is locked in the current aggressive locking stage, override the information in memBuf.
 		isInLastAggressiveLockingStage := false
@@ -1327,10 +1328,16 @@ func (txn *KVTxn) lockKeys(ctx context.Context, lockCtx *tikv.LockCtx, fn func()
 			}
 		}
 
-		if !locked || isInLastAggressiveLockingStage {
-			// Locks acquired in the previous aggressive locking stage might need to be updated later in
-			// `filterAggressiveLockedKeys`.
-			keys = append(keys, key)
+		if !lockCtx.InShareMode {
+			if !locked || isInLastAggressiveLockingStage {
+				// Locks acquired in the previous aggressive locking stage might need to be updated later in
+				// `filterAggressiveLockedKeys`.
+				keys = append(keys, key)
+			}
+		} else {
+			if !sharedLocked {
+				keys = append(keys, key)
+			}
 		}
 		if locked && txn.IsPessimistic() {
 			if checkKeyExists && valueExist {

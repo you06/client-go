@@ -1255,7 +1255,12 @@ func (txn *KVTxn) lockKeys(ctx context.Context, lockCtx *tikv.LockCtx, fn func()
 	startTime := time.Now()
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
-
+	if lockCtx.InShareMode {
+		if txn.IsInAggressiveLockingMode() {
+			txn.DoneAggressiveLocking(ctx)
+		}
+		txn.committer.SetHasSharedLock(true)
+	}
 	err = txn.exitAggressiveLockingIfInapplicable(ctx, keysInput)
 	if err != nil {
 		return err

@@ -576,8 +576,9 @@ func (c *twoPhaseCommitter) initKeysAndMutations(ctx context.Context) error {
 				op = kvrpcpb.Op_Shared
 				lockCnt++
 				c.hasSharedLock = true
+			} else {
+				continue
 			}
-			continue
 		} else {
 			value = it.Value()
 			var isUnnecessaryKV bool
@@ -1727,6 +1728,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			c.setOnePC(true)
 			c.hasTriedOnePC = true
 		}
+	} else {
+		// For pipelined transactions or transactions with shared locks,
+		// async commit and 1PC are not supported.
+		c.setAsyncCommit(false)
+		c.setOnePC(false)
 	}
 
 	// if lazy uniqueness check is enabled in TiDB (@@constraint_check_in_place_pessimistic=0), for_update_ts might be
@@ -2378,4 +2384,8 @@ func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) CommitterMutations {
 		}
 	}
 	return &res
+}
+
+func (c *twoPhaseCommitter) SetHasSharedLock(hasSharedLock bool) {
+	c.hasSharedLock = hasSharedLock
 }

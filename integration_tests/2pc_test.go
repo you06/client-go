@@ -2852,6 +2852,10 @@ func (s *testCommitterSuite) TestLockAndCommitSharedLock() {
 	lockctx2.InShareMode = true
 	s.Nil(txn2.LockKeys(context.Background(), lockctx2, key))
 
+	flags, err := txn2.GetMemBuffer().GetFlags(key)
+	s.Nil(err)
+	s.True(flags.HasSharedLocked())
+
 	s.Nil(txn3.LockKeys(context.Background(), kv.NewLockCtx(mustGetTS(), 1000, time.Now()), pk3))
 	s.Equal(txn3.GetCommitter().GetPrimaryKey(), pk3)
 	lockDone := make(chan time.Time)
@@ -2862,10 +2866,10 @@ func (s *testCommitterSuite) TestLockAndCommitSharedLock() {
 
 	time.Sleep(500 * time.Millisecond)
 	beforeRelease := time.Now()
-	// s.Nil(txn1.Commit(context.Background()))
-	// s.Nil(txn2.Commit(context.Background()))
-	s.Nil(txn1.Rollback())
-	s.Nil(txn2.Rollback())
+	s.Nil(txn1.Commit(context.Background()))
+	s.Nil(txn2.Commit(context.Background()))
+	// s.Nil(txn1.Rollback())
+	// s.Nil(txn2.Rollback())
 	afterRelease := <-lockDone
 	s.True(afterRelease.After(beforeRelease), "txn3 should block until txn1 and txn2 commit")
 }

@@ -202,6 +202,8 @@ type twoPhaseCommitter struct {
 		primaryOp                    kvrpcpb.Op
 		pipelinedStart, pipelinedEnd []byte
 	}
+
+	hasSharedLock bool
 }
 
 type memBufferMutations struct {
@@ -572,9 +574,8 @@ func (c *twoPhaseCommitter) initKeysAndMutations(ctx context.Context) error {
 				lockCnt++
 			} else if flags.HasSharedLocked() {
 				op = kvrpcpb.Op_Shared
-				c.setAsyncCommit(false)
-				c.setOnePC(false)
 				lockCnt++
+				c.hasSharedLock = true
 			}
 			continue
 		} else {
@@ -1713,7 +1714,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	commitDetail := c.getDetail()
 	commitTSMayBeCalculated := false
-	if !c.txn.isPipelined {
+	if !c.txn.isPipelined && !c.hasSharedLock {
 		// Check async commit is available or not.
 		if c.checkAsyncCommit() {
 			commitTSMayBeCalculated = true

@@ -572,6 +572,8 @@ func (c *twoPhaseCommitter) initKeysAndMutations(ctx context.Context) error {
 				lockCnt++
 			} else if flags.HasSharedLocked() {
 				op = kvrpcpb.Op_Shared
+				c.setAsyncCommit(false)
+				c.setOnePC(false)
 				lockCnt++
 			}
 			continue

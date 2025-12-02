@@ -37,15 +37,21 @@ package tikv_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/suite"
-	"github.com/tikv/client-go/v2/error"
+	tikverr "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	"github.com/tikv/client-go/v2/txnkv/txnlock"
 )
 
 func TestSafepoint(t *testing.T) {
@@ -117,7 +123,7 @@ func (s *testSafePointSuite) TestSafePoint() {
 	_, geterr2 := txn2.Get(context.TODO(), encodeKey(s.prefix, s08d("key", 0)))
 	s.NotNil(geterr2)
 
-	_, isFallBehind := errors.Cause(geterr2).(*error.ErrTxnAbortedByGC)
+	_, isFallBehind := errors.Cause(geterr2).(*tikverr.ErrTxnAbortedByGC)
 	isMayFallBehind := strings.Contains(geterr2.Error(), "start timestamp may fall behind safe point")
 	isBehind := isFallBehind || isMayFallBehind
 	s.True(isBehind)
@@ -129,7 +135,7 @@ func (s *testSafePointSuite) TestSafePoint() {
 
 	_, seekerr := txn3.Iter(encodeKey(s.prefix, ""), nil)
 	s.NotNil(seekerr)
-	_, isFallBehind = errors.Cause(geterr2).(*error.ErrTxnAbortedByGC)
+	_, isFallBehind = errors.Cause(geterr2).(*tikverr.ErrTxnAbortedByGC)
 	isMayFallBehind = strings.Contains(geterr2.Error(), "start timestamp may fall behind safe point")
 	isBehind = isFallBehind || isMayFallBehind
 	s.True(isBehind)
@@ -142,10 +148,110 @@ func (s *testSafePointSuite) TestSafePoint() {
 
 	_, batchgeterr := toTiDBTxn(&txn4).BatchGet(context.Background(), toTiDBKeys(keys))
 	s.NotNil(batchgeterr)
-	_, isFallBehind = errors.Cause(geterr2).(*error.ErrTxnAbortedByGC)
+	_, isFallBehind = errors.Cause(geterr2).(*tikverr.ErrTxnAbortedByGC)
 	isMayFallBehind = strings.Contains(geterr2.Error(), "start timestamp may fall behind safe point")
 	isBehind = isFallBehind || isMayFallBehind
 	s.True(isBehind)
 	// sleep to wait for the next transaction will get a valid startTS to make the next test stable.
 	time.Sleep(time.Second)
+}
+
+func (s *testSafePointSuite) TestGCResolvePessimisticLockDuringCommit() {
+	ctx := context.Background()
+	primaryKey := encodeKey(s.prefix, "gc_primary")
+	secondaryKey := encodeKey(s.prefix, "gc_secondary")
+
+	txn := s.beginTxn()
+	txn.SetPessimistic(true)
+	lockCtx := kv.NewLockCtx(txn.StartTS(), kv.LockAlwaysWait, time.Now())
+	s.Require().NoError(txn.LockKeys(ctx, lockCtx, primaryKey, secondaryKey))
+	s.Require().NoError(txn.Set(primaryKey, []byte("v1")))
+	s.Require().NoError(txn.Set(secondaryKey, []byte("v2")))
+
+	_, err := s.store.SplitRegions(ctx, [][]byte{secondaryKey}, false, nil)
+	s.Require().NoError(err)
+
+	committer, err := txn.NewCommitter(1)
+	s.Require().NoError(err)
+	committer.SetPrimaryKey(primaryKey)
+
+	s.Require().NoError(failpoint.Enable("tikvclient/twoPCRequestBatchSizeLimit", "return"))
+	defer failpoint.Disable("tikvclient/twoPCRequestBatchSizeLimit")
+	s.Require().NoError(failpoint.Enable("tikvclient/prewriteSecondarySleep", "return(2000)"))
+	defer failpoint.Disable("tikvclient/prewriteSecondarySleep")
+
+	prewriteErrCh := make(chan error, 1)
+	go func() {
+		prewriteErrCh <- committer.PrewriteAllMutations(ctx)
+	}()
+
+	var snapshotLocks []*txnlock.Lock
+	var lastPrimaryType, lastSecondaryType kvrpcpb.Op
+	lastLockCount := 0
+	waitDeadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(waitDeadline) {
+		locks, err := s.store.ScanLocks(ctx, primaryKey, []byte(""), math.MaxUint64)
+		s.Require().NoError(err)
+		lastLockCount = len(locks)
+		lockByKey := make(map[string]*txnlock.Lock, len(locks))
+		for _, l := range locks {
+			lockByKey[string(l.Key)] = l
+		}
+		primary := lockByKey[string(primaryKey)]
+		secondary := lockByKey[string(secondaryKey)]
+		if primary != nil {
+			lastPrimaryType = primary.LockType
+		}
+		if secondary != nil {
+			lastSecondaryType = secondary.LockType
+		}
+		if primary != nil && secondary != nil {
+			snapshotLocks = []*txnlock.Lock{primary, secondary}
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if len(snapshotLocks) == 0 {
+		s.T().Logf("last lock types primary=%v secondary=%v, last scan count=%d", lastPrimaryType, lastSecondaryType, lastLockCount)
+	}
+	s.Require().NotEmpty(snapshotLocks, "failed to capture locks before gc resolve")
+	snapshotLocks[1].LockType = kvrpcpb.Op_PessimisticLock
+
+	s.Require().NoError(<-prewriteErrCh)
+
+	bo := tikv.NewGcResolveLockMaxBackoffer(ctx)
+	loc, err := s.store.GetRegionCache().LocateKey(bo, snapshotLocks[0].Key)
+	s.Require().NoError(err)
+	resolved, err := s.store.GetLockResolver().BatchResolveLocks(bo, snapshotLocks, loc.Region)
+	s.Require().NoError(err)
+	s.True(resolved)
+
+	commitTS, err := s.store.GetOracle().GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	s.Require().NoError(err)
+	committer.SetCommitTS(commitTS)
+	commitErr := committer.CommitMutations(ctx)
+
+	readTS, err := s.store.CurrentTimestamp(oracle.GlobalTxnScope)
+	s.Require().NoError(err)
+	snapshot := s.store.GetSnapshot(readTS)
+
+	v1, err1 := snapshot.Get(ctx, primaryKey)
+	v2, err2 := snapshot.Get(ctx, secondaryKey)
+
+	s.False((err1 == nil) != (err2 == nil), "inconsistent commit state: err1=%v err2=%v", err1, err2)
+
+	if commitErr == nil {
+		s.Require().NoError(err1)
+		s.Require().NoError(err2)
+		s.Equal([]byte("v1"), v1)
+		s.Equal([]byte("v2"), v2)
+	} else {
+		s.Equal(tikverr.ErrNotExist, err1)
+		s.Equal(tikverr.ErrNotExist, err2)
+	}
+
+	cleanupTxn := s.beginTxn()
+	s.Require().NoError(cleanupTxn.Delete(primaryKey))
+	s.Require().NoError(cleanupTxn.Delete(secondaryKey))
+	s.Require().NoError(cleanupTxn.Commit(ctx))
 }

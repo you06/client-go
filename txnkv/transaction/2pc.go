@@ -1108,6 +1108,13 @@ func (c *twoPhaseCommitter) doActionOnBatches(
 		}
 		return nil
 	}
+	// Try async batch processing for prewrite and commit actions.
+	if c.canUseAsyncBatch(action) {
+		asyncExe := newAsyncBatchExecutor(c, action, bo)
+		return asyncExe.process(batches)
+	}
+
+	// Fall back to goroutine-based parallel processing.
 	rateLim := c.calcActionConcurrency(len(batches), action)
 	batchExecutor := newBatchExecutor(rateLim, c, action, bo)
 	return batchExecutor.process(batches)

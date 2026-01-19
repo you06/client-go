@@ -169,6 +169,8 @@ func (e *asyncBatchExecutor) sendBatchAsync(
 	switch act := e.action.(type) {
 	case actionPrewrite:
 		e.sendPrewriteAsync(bo, batch, act, cb)
+	case actionCommit:
+		e.sendCommitAsync(bo, batch, act, cb)
 	default:
 		// Fall back to sync mode for unsupported actions.
 		cb.Executor().Go(func() {
@@ -381,4 +383,148 @@ func (c *twoPhaseCommitter) canUseAsyncBatch(action twoPhaseCommitAction) bool {
 	default:
 		return false
 	}
+}
+
+// sendCommitAsync asynchronously sends a commit request for a single batch.
+func (e *asyncBatchExecutor) sendCommitAsync(
+	bo *retry.Backoffer,
+	batch batchMutations,
+	action actionCommit,
+	cb async.Callback[struct{}],
+) {
+	c := e.committer
+	keys := batch.mutations.GetKeys()
+
+	// Determine commit role based on whether this is the primary batch.
+	var commitRole kvrpcpb.CommitRole
+	if batch.isPrimary {
+		commitRole = kvrpcpb.CommitRole_Primary
+	} else {
+		commitRole = kvrpcpb.CommitRole_Secondary
+	}
+
+	// Build the commit request.
+	req := tikvrpc.NewRequest(tikvrpc.CmdCommit, &kvrpcpb.CommitRequest{
+		StartVersion:   c.startTS,
+		Keys:           keys,
+		PrimaryKey:     c.primary(),
+		CommitVersion:  c.commitTS,
+		CommitRole:     commitRole,
+		UseAsyncCommit: c.isAsyncCommit(),
+	}, kvrpcpb.Context{
+		Priority:               c.priority,
+		SyncLog:                c.syncLog,
+		ResourceGroupTag:       c.resourceGroupTag,
+		DiskFullOpt:            c.diskFullOpt,
+		TxnSource:              c.txnSource,
+		MaxExecutionDurationMs: uint64(client.MaxWriteExecutionTime.Milliseconds()),
+		RequestSource:          c.txn.GetRequestSource(),
+		ResourceControlContext: &kvrpcpb.ResourceControlContext{
+			ResourceGroupName: c.resourceGroupName,
+		},
+	})
+	if c.resourceGroupTag == nil && c.resourceGroupTagger != nil {
+		c.resourceGroupTagger(req)
+	}
+
+	sender := locate.NewRegionRequestSender(c.store.GetRegionCache(), c.store.GetTiKVClient(), c.store.GetOracle())
+	reqBegin := time.Now()
+
+	onResp := func(resp *tikvrpc.ResponseExt, err error) {
+		// Handle undetermined error for primary key.
+		// If we fail to receive response for the request that commits primary key, it will be undetermined
+		// whether this transaction has been successfully committed.
+		if batch.isPrimary && sender.GetRPCError() != nil && !c.isAsyncCommit() {
+			c.setUndeterminedErr(errors.WithStack(sender.GetRPCError()))
+		}
+
+		// Handle RPC error.
+		if err != nil {
+			cb.Invoke(struct{}{}, err)
+			return
+		}
+
+		// Check for region error.
+		regionErr, err := resp.GetRegionError()
+		if err != nil {
+			cb.Invoke(struct{}{}, err)
+			return
+		}
+
+		if regionErr != nil {
+			// Handle undetermined result for primary key.
+			if regionErr.GetUndeterminedResult() != nil && !c.isAsyncCommit() && batch.isPrimary {
+				cb.Invoke(struct{}{}, errors.WithStack(tikverr.ErrResultUndetermined))
+				return
+			}
+			// Region error: fall back to sync mode for retry.
+			e.handleCommitRegionError(bo, batch, action, cb)
+			return
+		}
+
+		// Check for missing response body.
+		if resp.Response.Resp == nil {
+			cb.Invoke(struct{}{}, errors.WithStack(tikverr.ErrBodyMissing))
+			return
+		}
+
+		commitResp := resp.Response.Resp.(*kvrpcpb.CommitResponse)
+
+		// Clear the undetermined error since TiKV has processed the commit primary key request.
+		if batch.isPrimary && !c.isAsyncCommit() {
+			c.setUndeterminedErr(nil)
+			reqDuration := time.Since(reqBegin)
+			c.getDetail().MergeCommitReqDetails(reqDuration, batch.region.GetID(), sender.GetStoreAddr(), commitResp.ExecDetailsV2)
+		}
+
+		// Check for key errors.
+		if keyErr := commitResp.GetError(); keyErr != nil {
+			// Handle commitTS rejected: need to get new commitTS and retry.
+			// This requires sync mode because we need to update commitTS.
+			e.handleCommitKeyError(bo, batch, action, cb)
+			return
+		}
+
+		// Success: mark transaction as committed.
+		c.mu.Lock()
+		c.mu.committed = true
+		c.mu.Unlock()
+		cb.Invoke(struct{}{}, nil)
+	}
+
+	sender.SendReqAsync(bo, req, batch.region, client.ReadTimeoutShort, async.NewCallback(cb.Executor(), onResp))
+}
+
+// handleCommitRegionError handles region errors by falling back to sync mode.
+func (e *asyncBatchExecutor) handleCommitRegionError(
+	bo *retry.Backoffer,
+	batch batchMutations,
+	action actionCommit,
+	cb async.Callback[struct{}],
+) {
+	cb.Executor().Go(func() {
+		// Use the sync path to handle region error and retry.
+		err := action.handleSingleBatch(e.committer, bo, batch)
+		cb.Schedule(struct{}{}, err)
+	})
+}
+
+// handleCommitKeyError handles key errors by falling back to sync mode.
+// This is necessary because commitTS rejected errors require getting a new commitTS
+// and retrying, which needs the sync path to properly coordinate the state update.
+func (e *asyncBatchExecutor) handleCommitKeyError(
+	bo *retry.Backoffer,
+	batch batchMutations,
+	action actionCommit,
+	cb async.Callback[struct{}],
+) {
+	cb.Executor().Go(func() {
+		// Use the sync path to handle key errors (especially commitTS rejected).
+		// The sync path will:
+		// 1. Check if it's a commitTS rejected error
+		// 2. Get a new commitTS if needed
+		// 3. Retry the commit with the new commitTS
+		err := action.handleSingleBatch(e.committer, bo, batch)
+		cb.Schedule(struct{}{}, err)
+	})
 }

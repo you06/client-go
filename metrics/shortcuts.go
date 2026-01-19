@@ -188,6 +188,15 @@ var (
 	AsyncBatchGetCounterWithLockError   prometheus.Counter
 	AsyncBatchGetCounterWithOtherError  prometheus.Counter
 
+	Async2PCPrewriteCounterWithOK          prometheus.Counter
+	Async2PCPrewriteCounterWithRegionError prometheus.Counter
+	Async2PCPrewriteCounterWithLockError   prometheus.Counter
+	Async2PCPrewriteCounterWithOtherError  prometheus.Counter
+	Async2PCCommitCounterWithOK            prometheus.Counter
+	Async2PCCommitCounterWithRegionError   prometheus.Counter
+	Async2PCCommitCounterWithKeyError      prometheus.Counter
+	Async2PCCommitCounterWithOtherError    prometheus.Counter
+
 	ReadRequestLeaderLocalBytes    prometheus.Observer
 	ReadRequestLeaderRemoteBytes   prometheus.Observer
 	ReadRequestFollowerLocalBytes  prometheus.Observer
@@ -353,6 +362,15 @@ func initShortcuts() {
 	AsyncBatchGetCounterWithRegionError = TiKVAsyncBatchGetCounter.WithLabelValues("region_error")
 	AsyncBatchGetCounterWithLockError = TiKVAsyncBatchGetCounter.WithLabelValues("lock_error")
 	AsyncBatchGetCounterWithOtherError = TiKVAsyncBatchGetCounter.WithLabelValues("other_error")
+
+	Async2PCPrewriteCounterWithOK = TiKVAsync2PCCounter.WithLabelValues("prewrite", "ok")
+	Async2PCPrewriteCounterWithRegionError = TiKVAsync2PCCounter.WithLabelValues("prewrite", "region_error")
+	Async2PCPrewriteCounterWithLockError = TiKVAsync2PCCounter.WithLabelValues("prewrite", "lock_error")
+	Async2PCPrewriteCounterWithOtherError = TiKVAsync2PCCounter.WithLabelValues("prewrite", "other_error")
+	Async2PCCommitCounterWithOK = TiKVAsync2PCCounter.WithLabelValues("commit", "ok")
+	Async2PCCommitCounterWithRegionError = TiKVAsync2PCCounter.WithLabelValues("commit", "region_error")
+	Async2PCCommitCounterWithKeyError = TiKVAsync2PCCounter.WithLabelValues("commit", "key_error")
+	Async2PCCommitCounterWithOtherError = TiKVAsync2PCCounter.WithLabelValues("commit", "other_error")
 
 	ReadRequestLeaderLocalBytes = TiKVReadRequestBytes.WithLabelValues("leader", "local")
 	ReadRequestLeaderRemoteBytes = TiKVReadRequestBytes.WithLabelValues("leader", "cross-zone")

@@ -25,6 +25,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/config/retry"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/internal/client"
@@ -142,17 +143,45 @@ func (m *mockAction) String() string {
 func TestCanUseAsyncBatch(t *testing.T) {
 	c := &twoPhaseCommitter{}
 
-	t.Run("actionPrewrite should use async", func(t *testing.T) {
+	t.Run("async is disabled when feature flag is off", func(t *testing.T) {
+		restore := config.UpdateGlobal(func(conf *config.Config) {
+			conf.EnableAsync2PC = false
+		})
+		defer restore()
+
+		action := actionPrewrite{}
+		assert.False(t, c.canUseAsyncBatch(action))
+
+		action2 := actionCommit{}
+		assert.False(t, c.canUseAsyncBatch(action2))
+	})
+
+	t.Run("actionPrewrite should use async when enabled", func(t *testing.T) {
+		restore := config.UpdateGlobal(func(conf *config.Config) {
+			conf.EnableAsync2PC = true
+		})
+		defer restore()
+
 		action := actionPrewrite{}
 		assert.True(t, c.canUseAsyncBatch(action))
 	})
 
-	t.Run("actionCommit should use async", func(t *testing.T) {
+	t.Run("actionCommit should use async when enabled", func(t *testing.T) {
+		restore := config.UpdateGlobal(func(conf *config.Config) {
+			conf.EnableAsync2PC = true
+		})
+		defer restore()
+
 		action := actionCommit{}
 		assert.True(t, c.canUseAsyncBatch(action))
 	})
 
-	t.Run("other actions should not use async", func(t *testing.T) {
+	t.Run("other actions should not use async even when enabled", func(t *testing.T) {
+		restore := config.UpdateGlobal(func(conf *config.Config) {
+			conf.EnableAsync2PC = true
+		})
+		defer restore()
+
 		action := &mockAction{name: "test"}
 		assert.False(t, c.canUseAsyncBatch(action))
 	})
@@ -435,6 +464,12 @@ func TestSendBatchAsync(t *testing.T) {
 
 func TestSendBatchAsyncDispatch(t *testing.T) {
 	t.Run("sendBatchAsync dispatches actionPrewrite type check", func(t *testing.T) {
+		// Enable async 2PC for this test.
+		restore := config.UpdateGlobal(func(conf *config.Config) {
+			conf.EnableAsync2PC = true
+		})
+		defer restore()
+
 		// This test verifies that actionPrewrite is correctly handled by sendBatchAsync
 		// by checking that the action type dispatch works correctly.
 		// Full integration testing with actual TiKV client would be done in integration tests.
@@ -629,6 +664,12 @@ func TestPrewriteWithAsyncBatchExecutor(t *testing.T) {
 
 func TestSendBatchAsyncDispatchCommit(t *testing.T) {
 	t.Run("sendBatchAsync dispatches actionCommit type check", func(t *testing.T) {
+		// Enable async 2PC for this test.
+		restore := config.UpdateGlobal(func(conf *config.Config) {
+			conf.EnableAsync2PC = true
+		})
+		defer restore()
+
 		// This test verifies that actionCommit is correctly handled by sendBatchAsync
 		// by checking that the action type dispatch works correctly.
 		store := &mockKVStore{}
@@ -818,6 +859,12 @@ func TestCommitWithAsyncBatchExecutor(t *testing.T) {
 
 func TestAsyncCommitPrimarySecondaryRoles(t *testing.T) {
 	t.Run("primary and secondary batches have different roles", func(t *testing.T) {
+		// Enable async 2PC for this test.
+		restore := config.UpdateGlobal(func(conf *config.Config) {
+			conf.EnableAsync2PC = true
+		})
+		defer restore()
+
 		// This test verifies that the commit role is correctly set based on isPrimary flag
 		store := &mockKVStore{}
 		committer := &twoPhaseCommitter{

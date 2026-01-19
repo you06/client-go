@@ -84,6 +84,8 @@ type Config struct {
 	EnablePreload bool
 	// EnableAsyncBatchGet indicates whether to use async api for batch get.
 	EnableAsyncBatchGet bool
+	// EnableAsync2PC indicates whether to use async api for 2PC prewrite and commit.
+	EnableAsync2PC bool
 	// the "zone" label of the tidb instance. It is used to determine whether a request involves cross AZ traffic, etc.
 	//
 	// NOTE: The value of "TxnScope" is also the "zone" label, but since the feaute "txn-scope" is to be deprecated
@@ -107,6 +109,7 @@ func DefaultConfig() Config {
 		EnableAsyncCommit:     false,
 		Enable1PC:             false,
 		EnableAsyncBatchGet:   false,
+		EnableAsync2PC:        false,
 		ZoneLabel:             "",
 	}
 }

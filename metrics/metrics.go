@@ -126,6 +126,7 @@ var (
 	TiKVTxnWriteConflictCounter                    prometheus.Counter
 	TiKVAsyncSendReqCounter                        *prometheus.CounterVec
 	TiKVAsyncBatchGetCounter                       *prometheus.CounterVec
+	TiKVAsync2PCCounter                            *prometheus.CounterVec
 	TiKVReadRequestBytes                           *prometheus.SummaryVec
 	TiKVTxnLagCommitTSWaitHistogram                *prometheus.HistogramVec
 	TiKVTxnLagCommitTSAttemptHistogram             *prometheus.HistogramVec
@@ -941,6 +942,15 @@ func initMetrics(namespace, subsystem string, constLabels prometheus.Labels) {
 			ConstLabels: constLabels,
 		}, []string{LblResult})
 
+	TiKVAsync2PCCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace:   namespace,
+			Subsystem:   subsystem,
+			Name:        "async_2pc_total",
+			Help:        "Counter of async 2PC operations (prewrite/commit).",
+			ConstLabels: constLabels,
+		}, []string{LblType, LblResult})
+
 	TiKVReadRequestBytes = prometheus.NewSummaryVec(
 		prometheus.SummaryOpts{
 			Namespace: namespace,
@@ -1071,6 +1081,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVTxnWriteConflictCounter)
 	prometheus.MustRegister(TiKVAsyncSendReqCounter)
 	prometheus.MustRegister(TiKVAsyncBatchGetCounter)
+	prometheus.MustRegister(TiKVAsync2PCCounter)
 	prometheus.MustRegister(TiKVReadRequestBytes)
 	prometheus.MustRegister(TiKVTxnLagCommitTSWaitHistogram)
 	prometheus.MustRegister(TiKVTxnLagCommitTSAttemptHistogram)

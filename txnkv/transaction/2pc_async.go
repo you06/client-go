@@ -208,6 +208,7 @@ func (e *asyncBatchExecutor) sendPrewriteAsync(
 	onResp := func(resp *tikvrpc.ResponseExt, err error) {
 		// Handle RPC error.
 		if err != nil {
+			metrics.Async2PCPrewriteCounterWithOtherError.Inc()
 			e.handlePrewriteRPCError(c, sender, cb, err)
 			return
 		}
@@ -215,18 +216,21 @@ func (e *asyncBatchExecutor) sendPrewriteAsync(
 		// Check for region error.
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
+			metrics.Async2PCPrewriteCounterWithOtherError.Inc()
 			cb.Invoke(struct{}{}, err)
 			return
 		}
 
 		if regionErr != nil {
 			// Region error: fall back to sync mode for retry.
+			metrics.Async2PCPrewriteCounterWithRegionError.Inc()
 			e.handlePrewriteRegionError(bo, batch, action, cb)
 			return
 		}
 
 		// Check for missing response body.
 		if resp.Response.Resp == nil {
+			metrics.Async2PCPrewriteCounterWithOtherError.Inc()
 			cb.Invoke(struct{}{}, errors.WithStack(tikverr.ErrBodyMissing))
 			return
 		}
@@ -236,12 +240,14 @@ func (e *asyncBatchExecutor) sendPrewriteAsync(
 
 		if len(keyErrs) == 0 {
 			// Success: handle the successful response.
+			metrics.Async2PCPrewriteCounterWithOK.Inc()
 			err := e.handlePrewriteSuccess(c, sender, batch, reqBegin, prewriteResp, bo)
 			cb.Invoke(struct{}{}, err)
 			return
 		}
 
 		// Key errors: fall back to sync mode for lock resolution.
+		metrics.Async2PCPrewriteCounterWithLockError.Inc()
 		e.handlePrewriteKeyErrors(bo, batch, action, cb)
 	}
 
@@ -376,6 +382,11 @@ func (e *asyncBatchExecutor) handlePrewriteSuccess(
 
 // canUseAsyncBatch checks if async batch processing can be used for the given action.
 func (c *twoPhaseCommitter) canUseAsyncBatch(action twoPhaseCommitAction) bool {
+	// Check if async 2PC is enabled in config.
+	if !config.GetGlobalConfig().EnableAsync2PC {
+		return false
+	}
+
 	switch action.(type) {
 	case actionPrewrite, actionCommit:
 		// Only enable async mode for prewrite and commit.
@@ -440,6 +451,7 @@ func (e *asyncBatchExecutor) sendCommitAsync(
 
 		// Handle RPC error.
 		if err != nil {
+			metrics.Async2PCCommitCounterWithOtherError.Inc()
 			cb.Invoke(struct{}{}, err)
 			return
 		}
@@ -447,6 +459,7 @@ func (e *asyncBatchExecutor) sendCommitAsync(
 		// Check for region error.
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
+			metrics.Async2PCCommitCounterWithOtherError.Inc()
 			cb.Invoke(struct{}{}, err)
 			return
 		}
@@ -454,16 +467,19 @@ func (e *asyncBatchExecutor) sendCommitAsync(
 		if regionErr != nil {
 			// Handle undetermined result for primary key.
 			if regionErr.GetUndeterminedResult() != nil && !c.isAsyncCommit() && batch.isPrimary {
+				metrics.Async2PCCommitCounterWithOtherError.Inc()
 				cb.Invoke(struct{}{}, errors.WithStack(tikverr.ErrResultUndetermined))
 				return
 			}
 			// Region error: fall back to sync mode for retry.
+			metrics.Async2PCCommitCounterWithRegionError.Inc()
 			e.handleCommitRegionError(bo, batch, action, cb)
 			return
 		}
 
 		// Check for missing response body.
 		if resp.Response.Resp == nil {
+			metrics.Async2PCCommitCounterWithOtherError.Inc()
 			cb.Invoke(struct{}{}, errors.WithStack(tikverr.ErrBodyMissing))
 			return
 		}
@@ -481,11 +497,13 @@ func (e *asyncBatchExecutor) sendCommitAsync(
 		if keyErr := commitResp.GetError(); keyErr != nil {
 			// Handle commitTS rejected: need to get new commitTS and retry.
 			// This requires sync mode because we need to update commitTS.
+			metrics.Async2PCCommitCounterWithKeyError.Inc()
 			e.handleCommitKeyError(bo, batch, action, cb)
 			return
 		}
 
 		// Success: mark transaction as committed.
+		metrics.Async2PCCommitCounterWithOK.Inc()
 		c.mu.Lock()
 		c.mu.committed = true
 		c.mu.Unlock()

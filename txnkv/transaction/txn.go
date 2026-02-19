@@ -192,6 +192,12 @@ type KVTxn struct {
 	diskFullOpt             kvrpcpb.DiskFullOpt
 	txnSource               uint64
 	commitTSUpperBoundCheck func(uint64) bool
+	// precommitHook is called after prewrite succeeds and commitTS is determined,
+	// but before the actual commit phase. This enables callers (e.g. TiDB cached
+	// table invalidation) to perform work that depends on the known commitTS
+	// before the data becomes visible. When set, async commit and 1PC are disabled
+	// to ensure commitTS is deterministic and known before commit.
+	precommitHook func(ctx context.Context, commitTS uint64) error
 	// interceptor is used to decorate the RPC request logic related to the txn.
 	interceptor    interceptor.RPCInterceptor
 	assertionLevel kvrpcpb.AssertionLevel
@@ -523,6 +529,13 @@ func (txn *KVTxn) SetKVFilter(filter KVFilter) {
 // returns false, the 2PC processing will abort.
 func (txn *KVTxn) SetCommitTSUpperBoundCheck(f func(commitTS uint64) bool) {
 	txn.commitTSUpperBoundCheck = f
+}
+
+// SetPrecommitHook sets a hook that is called after prewrite and commitTS
+// determination, but before the commit phase. When set, 1PC and async commit
+// are disabled to guarantee a deterministic commitTS is available.
+func (txn *KVTxn) SetPrecommitHook(f func(ctx context.Context, commitTS uint64) error) {
+	txn.precommitHook = f
 }
 
 // SetDiskFullOpt sets whether current operation is allowed in each TiKV disk usage level.

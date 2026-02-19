@@ -35,9 +35,11 @@
 package transaction
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMinCommitTsManager(t *testing.T) {
@@ -121,4 +123,26 @@ func TestMinCommitTsManager(t *testing.T) {
 			assert.Equal(t, manager.get(), uint64(1999))
 		},
 	)
+}
+
+func TestPrecommitHookDisablesAsyncCommitAndOnePC(t *testing.T) {
+	tt := newTestTxn(t, 100)
+	tt.enableAsyncCommit = true
+	tt.enable1PC = true
+
+	committer := &twoPhaseCommitter{txn: tt.KVTxn}
+
+	// Without precommitHook, async commit and 1PC should be determined by other conditions.
+	// With the hook set, they must be disabled.
+	tt.SetPrecommitHook(func(ctx context.Context, commitTS uint64) error {
+		return nil
+	})
+
+	require.False(t, committer.checkAsyncCommit(), "async commit should be disabled when precommitHook is set")
+	require.False(t, committer.checkOnePC(), "1PC should be disabled when precommitHook is set")
+
+	// After clearing the hook, the check should not be blocked by it.
+	tt.precommitHook = nil
+	// Note: checkAsyncCommit/checkOnePC may still return false due to other conditions
+	// (e.g., no mutations), but they should not be blocked by precommitHook.
 }

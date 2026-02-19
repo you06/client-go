@@ -1556,6 +1556,12 @@ func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 		return false
 	}
 
+	// Disable async commit when precommitHook is set, so that commitTS
+	// is deterministic (fetched from TSO) and known before commit.
+	if c.txn.precommitHook != nil {
+		return false
+	}
+
 	asyncCommitCfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
 	// TODO the keys limit need more tests, this value makes the unit test pass by now.
 	// Async commit is not compatible with Binlog because of the non unique timestamp issue.
@@ -1582,6 +1588,12 @@ func (c *twoPhaseCommitter) checkOnePC() bool {
 	}
 	// Disable 1PC for transaction when commitTSUpperBoundCheck is set.
 	if c.txn.commitTSUpperBoundCheck != nil {
+		return false
+	}
+
+	// Disable 1PC when precommitHook is set, so that commitTS
+	// is deterministic (fetched from TSO) and known before commit.
+	if c.txn.precommitHook != nil {
 		return false
 	}
 
@@ -1958,6 +1970,12 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		if !c.txn.commitTSUpperBoundCheck(commitTS) {
 			err = errors.Errorf("session %d check commit ts upper bound fail, txnStartTS: %d, comm: %d",
 				c.sessionID, c.startTS, c.commitTS)
+			return err
+		}
+	}
+
+	if c.txn.precommitHook != nil {
+		if err = c.txn.precommitHook(ctx, commitTS); err != nil {
 			return err
 		}
 	}
